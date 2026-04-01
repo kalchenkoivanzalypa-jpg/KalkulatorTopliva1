@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Админ — импорт{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Импорт бюллетеней</h1>
+  <p class="muted">Каталог по умолчанию — как в import_spimex_prices_from_pdf (data/bulletins).</p>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <form method="post" action="/admin/import/run">
+    <label for="last_n">Сколько последних PDF обработать (1–50)</label>
+    <input type="number" name="last_n" id="last_n" value="1" min="1" max="50"/>
+    <div class="actions"><button class="btn" type="submit">Запустить импорт</button></div>
+  </form>
+  {% if log %}
+  <h2>Лог</h2>
+  <pre class="log">{{ log }}</pre>
+  {% endif %}
+  <p><a href="/admin">← Меню</a></p>
+</div>
+{% endblock %}

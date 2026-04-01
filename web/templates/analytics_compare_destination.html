@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Сравнение — назначение{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Пункт назначения</h1>
+  <p class="muted">Для расчёта доставки до точки</p>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <form method="post" action="/analytics/compare/result">
+    <label for="destination">Населённый пункт или ж/д станция</label>
+    <input type="text" name="destination" id="destination" required/>
+    <div class="actions"><button class="btn" type="submit">Сравнить</button></div>
+  </form>
+  <p><a href="/analytics/compare/basis-search">← К базисам</a></p>
+</div>
+{% endblock %}

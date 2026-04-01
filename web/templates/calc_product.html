@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Расчёт — продукт{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Шаг 1. Выберите топливо</h1>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <form method="post" action="/calc/product">
+    <label for="product_id">Продукт</label>
+    <select name="product_id" id="product_id" required>
+      {% for p in products %}
+      <option value="{{ p.id }}">{{ p.name }}</option>
+      {% endfor %}
+    </select>
+    <div class="actions"><button class="btn" type="submit">Далее</button></div>
+  </form>
+</div>
+{% endblock %}

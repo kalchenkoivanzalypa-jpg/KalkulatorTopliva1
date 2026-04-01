@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Сравнение — базисы{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Выберите 3 базиса</h1>
+  {% if chosen %}
+  <p>Уже выбрано:</p>
+  <ul>
+    {% for bid, bname in chosen %}
+    <li>{{ bname }} (id {{ bid }})</li>
+    {% endfor %}
+  </ul>
+  <p class="muted">Осталось выбрать: {{ n_needed }}</p>
+  {% endif %}
+  <form method="post" action="/analytics/compare/basis-search">
+    <input type="hidden" name="offset" value="0"/>
+    <label for="q">Поиск базиса по названию</label>
+    <input type="text" name="q" id="q" value="{{ query or '' }}"/>
+    <div class="actions"><button class="btn" type="submit">Найти</button></div>
+  </form>
+
+  {% if basises %}
+  <h2>Кликните — добавить базис</h2>
+  <form method="post" action="/analytics/compare/pick-basis">
+    {% for b in basises %}
+    <div style="margin:0.35rem 0;">
+      <button class="btn secondary" type="submit" name="basis_id" value="{{ b.id }}">{{ b.name }}</button>
+      <span class="muted">{{ b.transport_type }}</span>
+    </div>
+    {% endfor %}
+  </form>
+  {% if total and total > (page_size or 12) %}
+  <form method="post" action="/analytics/compare/basis-search">
+    <input type="hidden" name="q" value="{{ query }}"/>
+    <input type="hidden" name="offset" value="{{ offset + (page_size or 12) }}"/>
+    <button class="btn secondary" type="submit" {% if offset + (page_size or 12) >= total %}disabled{% endif %}>Ещё</button>
+  </form>
+  {% endif %}
+  {% endif %}
+  <p><a href="/analytics/compare">← С начала</a></p>
+</div>
+{% endblock %}

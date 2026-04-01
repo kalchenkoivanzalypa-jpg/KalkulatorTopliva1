@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Расчёт — назначение{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Шаг 2. Пункт назначения</h1>
+  <p class="muted">Продукт: <b>{{ product_name }}</b></p>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <form method="post" action="/calc/destination">
+    <label for="destination">Населённый пункт или ж/д станция</label>
+    <input type="text" name="destination" id="destination" required placeholder="Например: Иркутск"/>
+    <div class="actions"><button class="btn" type="submit">Найти базисы</button></div>
+  </form>
+</div>
+{% endblock %}

@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Админ — бюллетени{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>PDF в каталоге</h1>
+  <p class="muted">{{ directory }}</p>
+  <ul>
+    {% for f in files %}
+    <li>{{ f.name }}</li>
+    {% else %}
+    <li class="muted">Файлов нет</li>
+    {% endfor %}
+  </ul>
+  <p><a href="/admin">← Меню</a></p>
+</div>
+{% endblock %}

@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Результат расчёта{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Результат</h1>
+  <p><b>{{ r.product_name }}</b> · {{ r.basis_name }} → {{ r.destination_name }}</p>
+  <p>Объём: <b>{{ '%.3g'|format(r.volume) }}</b> т · {{ r.transport }} · {{ r.dist_str }} км</p>
+  {{ r.rail_leg_html|safe }}
+  {% if r.wagons_info %}<p class="muted">{{ r.wagons_info }}</p>{% endif %}
+  <table>
+    <tr><th>Базовая цена ₽/т</th><td>{{ '%.0f'|format(r.base_price_per_ton) }}</td></tr>
+    <tr><th>Доставка ₽/т</th><td>{{ '%.0f'|format(r.delivery_cost / r.volume) }} ₽/т</td></tr>
+    <tr><th><b>Итого ₽/т</b></th><td><b>{{ '%.0f'|format(r.total_price / r.volume) }} ₽/т</b></td></tr>
+    <tr><th>Базовая сумма</th><td>{{ '%.0f'|format(r.base_total) }} ₽</td></tr>
+    <tr><th>Ставка доставки</th><td>{{ '%.2f'|format(r.rate) }}</td></tr>
+    <tr><th>Доставка</th><td>{{ '%.0f'|format(r.delivery_cost) }} ₽</td></tr>
+    <tr><th><b>Итого</b></th><td><b>{{ '%.0f'|format(r.total_price) }} ₽</b></td></tr>
+  </table>
+  <p class="muted"><i>Ориентировочно. Точное КП — у ООО «НК-Востокнефтепродукт».</i></p>
+
+  {% if logged_in %}
+  <form method="post" action="/cabinet/lead" style="margin-top:1rem;">
+    <input type="hidden" name="request_id" value="{{ r.request_id }}"/>
+    <button class="btn" type="submit">Оставить заявку на КП</button>
+  </form>
+  <p class="muted">Заявка уйдёт на ваш email и менеджерам (если настроено).</p>
+  {% else %}
+  <p><a href="/login?next=/cabinet">Войдите по email</a>, чтобы оформить заявку и подписки.</p>
+  {% endif %}
+
+  <div class="actions">
+    <a class="btn secondary" href="/calc">Новый расчёт</a>
+  </div>
+</div>
+{% endblock %}

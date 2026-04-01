@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Код{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Введите код</h1>
+  <p class="muted">Письмо отправлено на <b>{{ email }}</b></p>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <form method="post" action="/verify">
+    <label for="code">Код из письма</label>
+    <input type="text" name="code" id="code" inputmode="numeric" pattern="[0-9]*" maxlength="8" required/>
+    <div class="actions"><button class="btn" type="submit">Войти</button></div>
+  </form>
+  <p><a href="/login">Отправить код снова</a></p>
+</div>
+{% endblock %}

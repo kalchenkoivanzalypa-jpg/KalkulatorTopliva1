@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Вход{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Вход по email</h1>
+  <p class="muted">Отправим одноразовый код. Продолжая, вы соглашаетесь на обработку email для входа и уведомлений.</p>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <form method="post" action="/login">
+    <label for="email">Email</label>
+    <input type="email" name="email" id="email" required autocomplete="email"/>
+    <div class="actions"><button class="btn" type="submit">Получить код</button></div>
+  </form>
+</div>
+{% endblock %}

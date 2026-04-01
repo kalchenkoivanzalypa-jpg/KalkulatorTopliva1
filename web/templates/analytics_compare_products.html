@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Сравнение — топливо{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Сравнить 3 базиса</h1>
+  <p class="muted">Шаг 1 — выберите топливо</p>
+  <form method="post" action="/analytics/compare/product">
+    <label for="product_id">Продукт</label>
+    <select name="product_id" id="product_id" required>
+      {% for p in products %}
+      <option value="{{ p.id }}">{{ p.name }}</option>
+      {% endfor %}
+    </select>
+    <div class="actions"><button class="btn" type="submit">Далее</button></div>
+  </form>
+  <p><a href="/analytics">← Аналитика</a></p>
+</div>
+{% endblock %}

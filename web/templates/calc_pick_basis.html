@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Расчёт — базис{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Шаг 3. Выберите базис</h1>
+  <p class="muted">Назначение: <b>{{ destination }}</b></p>
+  <form method="post" action="/calc/volume">
+    <div class="grid">
+      {% for item in items %}
+      <label style="display:flex;align-items:flex-start;gap:0.5rem;padding:0.5rem;border:1px solid var(--border);border-radius:8px;cursor:pointer;">
+        <input type="radio" name="basis_id" value="{{ item.basis.id }}" required/>
+        <span>
+          <strong>{{ item.basis.name }}</strong>
+          <span class="muted">
+            · {{ '%.0f'|format(item.distance) }} км
+            · {{ 'Ж/Д' if item.transport_type=='rail' else 'Авто' }}
+          </span><br/>
+          <span class="muted">
+            Цена базиса: {{ '%.0f'|format(item.price.current_price) }} ₽/т
+            + доставка: {{ '%.0f'|format(item.delivery_cost_per_ton) }} ₽/т
+            = <b>{{ '%.0f'|format(item.total_cost_per_ton) }} ₽/т</b>
+          </span>
+        </span>
+      </label>
+      {% endfor %}
+    </div>
+    <div class="actions"><button class="btn" type="submit">Далее — объём</button></div>
+  </form>
+</div>
+{% endblock %}

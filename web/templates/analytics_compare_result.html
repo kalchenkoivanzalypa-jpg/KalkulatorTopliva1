@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Сравнение базисов{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Сравнение 3 базисов</h1>
+  <p><b>{{ res.title_product }}</b> · назначение: {{ res.destination }}</p>
+  {% for row in res.rows %}
+  <div style="margin:1rem 0;padding:0.75rem;border:1px solid var(--border);border-radius:8px;">
+    <h2 style="margin:0 0 0.5rem;font-size:1rem;">{{ row.basis_name }} ({{ row.transport }})</h2>
+    {{ row.html_block|safe }}
+    <form method="post" action="/analytics/order" style="margin-top:0.75rem;">
+      <input type="hidden" name="basis_id" value="{{ (basis_ids[loop.index0] if basis_ids else '') }}"/>
+      <input type="hidden" name="product_id" value="{{ product_id }}"/>
+      <input type="hidden" name="destination" value="{{ destination }}"/>
+      <label for="vol{{ loop.index0 }}">Объём, тонн</label>
+      <input type="text" name="volume" id="vol{{ loop.index0 }}" inputmode="decimal" placeholder="60" required/>
+      <div class="actions"><button class="btn" type="submit">Оставить заявку на КП</button></div>
+      <p class="muted">Нужен вход по email. Заявка уйдёт на email и менеджерам (если настроено).</p>
+    </form>
+  </div>
+  {% endfor %}
+  {% if res.best_line %}<p class="ok">{{ res.best_line }}</p>{% endif %}
+  <details>
+    <summary>5 дней по каждому базису</summary>
+    <div class="muted">{{ res.details_html|safe }}</div>
+  </details>
+  <p><a href="/analytics/compare">← Новое сравнение</a></p>
+</div>
+{% endblock %}

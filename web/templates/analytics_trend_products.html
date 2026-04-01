@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Тренд — топливо{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Тренд: выберите топливо</h1>
+  <p class="muted">Базис: <b>{{ basis.name if basis else '—' }}</b></p>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <form method="post" action="/analytics/trend/result">
+    <input type="hidden" name="basis_id" value="{{ basis.id }}"/>
+    <label for="product_id">Продукт</label>
+    <select name="product_id" id="product_id" required>
+      {% for p in products %}
+      <option value="{{ p.id }}">{{ p.name }}</option>
+      {% endfor %}
+    </select>
+    <div class="actions"><button class="btn" type="submit">Показать тренд</button></div>
+  </form>
+  <p><a href="/analytics/trend">← Назад</a></p>
+</div>
+{% endblock %}

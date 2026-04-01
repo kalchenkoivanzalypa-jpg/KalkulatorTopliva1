@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Тренд{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Тренд за 10 торговых дней</h1>
+  <p><b>{{ tr.product_name }}</b> · {{ tr.basis_name }}</p>
+  <p class="muted">Код: <code>{{ tr.instrument_code }}</code></p>
+  <h2>Последние дни</h2>
+  <ul>
+    {% for line in tr.lines %}
+    <li>{{ line }}</li>
+    {% endfor %}
+  </ul>
+  <p>Минимум: {{ tr.pmin }} · Максимум: {{ tr.pmax }} · Прогноз: {{ tr.pforecast }}</p>
+  <p class="muted">{{ tr.forecast_parts | join('; ') }}</p>
+  <details>
+    <summary>Подробнее по 10 дням</summary>
+    <ul>
+      {% for line in tr.details_lines %}
+      <li>{{ line }}</li>
+      {% endfor %}
+    </ul>
+  </details>
+  <h2>Заявка с доставкой до точки</h2>
+  <form method="post" action="/analytics/order">
+    <input type="hidden" name="basis_id" value="{{ basis_id }}"/>
+    <input type="hidden" name="product_id" value="{{ product_id }}"/>
+    <label for="destination">Назначение (НП или ж/д станция)</label>
+    <input type="text" name="destination" id="destination" placeholder="Иркутск" required/>
+    <label for="volume">Объём, тонн</label>
+    <input type="text" name="volume" id="volume" inputmode="decimal" placeholder="60" required/>
+    <div class="actions"><button class="btn" type="submit">Оставить заявку на КП</button></div>
+    <p class="muted">Нужен вход по email. Заявка уйдёт на email и менеджерам (если настроено).</p>
+  </form>
+  <p><a href="/analytics/trend">← Новый тренд</a></p>
+</div>
+{% endblock %}

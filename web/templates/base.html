@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>{% block title %}НК калькулятор топлива{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css"/>
+</head>
+{% set _embed = (request.query_params.get('embed') or '') %}
+{% set embed = (_embed in ['1','true','yes','on']) %}
+<body class="{{ 'embed' if embed else '' }}">
+  <div class="wrap {{ 'wrap-embed' if embed else '' }}">
+    {% if not embed %}
+      <header class="site">
+        <a class="brand" href="/">НК · топливо</a>
+        <nav class="top">
+          <a href="/calc">Расчёт</a>
+          <a href="/analytics">Аналитика</a>
+          <a href="/cabinet">Кабинет</a>
+          <a href="/about">О сервисе</a>
+          <a href="/login">Войти</a>
+        </nav>
+      </header>
+    {% else %}
+      <div class="embed-bar">
+        <div class="muted">Калькулятор встроен на сайт</div>
+        <a class="btn secondary" href="{{ request.url }}" target="_blank" rel="noopener">Открыть в новой вкладке</a>
+      </div>
+    {% endif %}
+    <main>
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</body>
+</html>

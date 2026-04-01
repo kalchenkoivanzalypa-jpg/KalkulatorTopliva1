@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Тренд — поиск базиса{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Тренд: поиск базиса</h1>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <form method="post" action="/analytics/trend/search">
+    <input type="hidden" name="offset" value="0"/>
+    <label for="q">Часть названия базиса</label>
+    <input type="text" name="q" id="q" value="{{ query or '' }}" placeholder="Например: Ангарск"/>
+    <div class="actions"><button class="btn" type="submit">Найти</button></div>
+  </form>
+
+  {% if basises %}
+  <h2>Результаты</h2>
+  <ul>
+    {% for b in basises %}
+    <li><a href="/analytics/trend/basis/{{ b.id }}">{{ b.name }}</a>
+      <span class="muted">({{ b.transport_type or '—' }})</span></li>
+    {% endfor %}
+  </ul>
+  {% if total and total > (page_size or 12) %}
+  <form method="post" action="/analytics/trend/search" style="display:inline;">
+    <input type="hidden" name="q" value="{{ query }}"/>
+    <input type="hidden" name="offset" value="{{ offset + (page_size or 12) }}"/>
+    <button class="btn secondary" type="submit" {% if offset + (page_size or 12) >= total %}disabled{% endif %}>Следующая страница</button>
+  </form>
+  {% endif %}
+  {% endif %}
+  <p><a href="/analytics">← Аналитика</a></p>
+</div>
+{% endblock %}
