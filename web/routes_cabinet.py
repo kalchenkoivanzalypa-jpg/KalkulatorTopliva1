@@ -5,16 +5,15 @@ import logging
 
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 
 from bot.handlers import notify_managers_about_lead, send_order_to_email
 from db.database import Basis, CityDestination, Lead, PriceAlert, Product, UserRequest
 from web.deps import DbSession, require_email_user
+from web.jinja_env import templates
 from web.products_util import list_products_for_calc
 
 router = APIRouter()
-templates = Jinja2Templates(directory="web/templates")
 logger = logging.getLogger(__name__)
 
 

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 
 from bot.handlers import notify_managers_about_lead, send_order_to_email
@@ -13,6 +12,7 @@ from utils.rail_logistics import find_rail_station_for_destination, is_sakhalin_
 from web.deps import DbSession, require_email_user
 from web.products_util import list_products_for_basis
 from web.services.calc_service import finalize_calculation, resolve_destination_to_id
+from web.jinja_env import templates
 from web.services.analytics_service import (
     compute_compare_three,
     compute_trend,
@@ -21,7 +21,6 @@ from web.services.analytics_service import (
 )
 
 router = APIRouter()
-templates = Jinja2Templates(directory="web/templates")
 
 PAGE_SIZE = 12
 

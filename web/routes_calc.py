@@ -5,12 +5,12 @@ from typing import Optional
 
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
 
 from bot.handlers import find_nearest_basises, MAX_AUTO_DISTANCE_KM, MAX_RAIL_DISTANCE_KM
 from db.database import Product
 from web.deps import DbSession, init_guest_session, optional_session_user, require_guest_user
 from web.products_util import list_products_for_calc
+from web.jinja_env import templates
 from web.services.calc_service import (
     finalize_calculation,
     rebuild_selected,
@@ -19,7 +19,6 @@ from web.services.calc_service import (
 )
 
 router = APIRouter()
-templates = Jinja2Templates(directory="web/templates")
 
 
 @router.get("/calc", response_class=HTMLResponse)

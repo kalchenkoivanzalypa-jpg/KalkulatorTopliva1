@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Админ — тест SMTP{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Проверка почты (SMTP)</h1>
+  <p class="muted">Те же переменные <code>SMTP_*</code>, что для входа по коду на сайте и для заявок из Telegram-бота.</p>
+  {% set s = smtp_admin() %}
+  <ul class="muted" style="margin-bottom:1rem;">
+    <li>Статус: {% if s.configured %}настроено{% else %}не настроено{% endif %}</li>
+    <li>Хост (фрагмент): {{ s.host_hint }} · порт {{ s.port }} · режим: {{ s.mode }}</li>
+    <li>От кого (From): {{ s.from_addr }}</li>
+  </ul>
+  {% if ok %}<p class="success">Письмо отправлено. Проверьте «Входящие» и папку «Спам».</p>{% endif %}
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <form method="post" action="/admin/smtp-test">
+    <label for="to_email">Куда отправить тест</label>
+    <input type="email" name="to_email" id="to_email" value="{{ default_to }}" required autocomplete="email"/>
+    <div class="actions"><button class="btn" type="submit">Отправить тестовое письмо</button></div>
+  </form>
+  <p><a href="/admin">← Меню</a></p>
+</div>
+{% endblock %}

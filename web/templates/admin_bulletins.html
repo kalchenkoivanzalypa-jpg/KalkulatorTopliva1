@@ -2,15 +2,27 @@
 {% block title %}Админ — бюллетени{% endblock %}
 {% block content %}
 <div class="card">
-  <h1>PDF в каталоге</h1>
-  <p class="muted">{{ directory }}</p>
+  <h1>Бюллетени СПбМТСБ (PDF)</h1>
+  <p class="muted">Каталог на сервере: {{ directory }}</p>
+  {% if upload_ok %}<p class="success">Файл загружен. Запустите <a href="/admin/import">импорт</a>.</p>{% endif %}
+  {% if upload_error == "not_pdf" %}<p class="error">Нужен файл с расширением .pdf</p>{% endif %}
+  {% if upload_error == "too_big" %}<p class="error">Файл слишком большой (лимит 35 МБ)</p>{% endif %}
+  {% if upload_error == "empty" %}<p class="error">Файл пустой или слишком маленький</p>{% endif %}
+  {% if upload_error == "path" %}<p class="error">Некорректное имя файла</p>{% endif %}
+  <h2>Загрузить PDF</h2>
+  <form method="post" action="/admin/bulletins/upload" enctype="multipart/form-data">
+    <label for="file">Файл бюллетеня</label>
+    <input type="file" name="file" id="file" accept="application/pdf,.pdf" required/>
+    <div class="actions"><button class="btn" type="submit">Загрузить</button></div>
+  </form>
+  <h2>Уже в каталоге</h2>
   <ul>
     {% for f in files %}
     <li>{{ f.name }}</li>
     {% else %}
-    <li class="muted">Файлов нет</li>
+    <li class="muted">Файлов нет — загрузите PDF выше или скопируйте на сервер в этот каталог.</li>
     {% endfor %}
   </ul>
-  <p><a href="/admin">← Меню</a></p>
+  <p><a href="/admin/import">Импорт цен из PDF</a> · <a href="/admin">← Меню</a></p>
 </div>
 {% endblock %}

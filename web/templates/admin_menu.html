@@ -3,9 +3,11 @@
 {% block content %}
 <div class="card">
   <h1>Админка</h1>
+  {% set s = smtp_admin() %}
+  <p class="muted">Почта (SMTP): {% if s.configured %}настроена ({{ s.mode }}, порт {{ s.port }}){% else %}<strong>не настроена</strong> — OTP и письма по заявкам не уйдут{% endif %} · <a href="/admin/smtp-test">проверить отправку</a></p>
   <ul>
-    <li><a href="/admin/import">Импорт PDF (СПбМТСБ)</a></li>
-    <li><a href="/admin/bulletins">Список бюллетеней</a></li>
+    <li><a href="/admin/import">Импорт PDF (СПбМТСБ)</a> — обновить рыночные цены из загруженных бюллетеней</li>
+    <li><a href="/admin/bulletins">Бюллетени</a> — загрузить PDF и список файлов</li>
     <li><a href="/admin/leads">Лиды</a> · <a href="/admin/leads.csv">CSV</a></li>
     <li><a href="/admin/check">Проверка instrument_code</a></li>
   </ul>

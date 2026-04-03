@@ -13,6 +13,9 @@ WEB_SECRET_KEY = os.getenv("WEB_SECRET_KEY", os.getenv("BOT_TOKEN", "change-me-i
 # Админка сайта (отдельно от ADMIN_TELEGRAM_IDS бота)
 ADMIN_WEB_PASSWORD = os.getenv("ADMIN_WEB_PASSWORD", "").strip()
 
+# Ссылка на маркетинговый сайт (Тильда и т.п.) — шапка/подвал веб-интерфейса
+MARKETING_SITE_URL = os.getenv("MARKETING_SITE_URL", "https://nk-vsnp.ru").strip() or "https://nk-vsnp.ru"
+
 # OTP
 OTP_TTL_MINUTES = int(os.getenv("OTP_TTL_MINUTES", "15"))
 OTP_MAX_ATTEMPTS = int(os.getenv("OTP_MAX_ATTEMPTS", "5"))

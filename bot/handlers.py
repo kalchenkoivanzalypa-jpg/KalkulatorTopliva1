@@ -406,21 +406,15 @@ async def get_or_create_user(message: Message, session) -> User:
 
 
 async def send_order_to_email(email: str, request: UserRequest, session):
-    """Отправка заявки на email (SMTP) + фоллбек лог."""
-    import asyncio
+    """Отправка заявки на email (SMTP) + фоллбек лог. Те же переменные SMTP, что и у веб-интерфейса."""
     import os
-    import smtplib
-    from email.message import EmailMessage
     from datetime import datetime, timezone
 
-    # Куда слать заявку (ваша почта продаж). Если не задано — шлём только пользователю.
+    from web.email_util import send_smtp_email
+
+    # Куда слать заявку (ваша почта продаж). Если не задано — шлём только клиенту.
     sales_to = (os.getenv("SALES_TO_EMAIL") or "").strip()
     smtp_host = (os.getenv("SMTP_HOST") or "").strip()
-    smtp_port = int(os.getenv("SMTP_PORT") or "587")
-    smtp_user = (os.getenv("SMTP_USER") or "").strip()
-    smtp_password = (os.getenv("SMTP_PASSWORD") or "").strip()
-    smtp_from = (os.getenv("SMTP_FROM") or smtp_user or sales_to or "no-reply@example.com").strip()
-    use_tls = (os.getenv("SMTP_TLS", "1").strip() not in ("0", "false", "False"))
 
     # Собираем карточку заявки
     product = await session.get(Product, request.product_id)
@@ -455,23 +449,8 @@ async def send_order_to_email(email: str, request: UserRequest, session):
         logger.info("📧 Заявка #%s: to=%s sales_to=%s\n%s", request.id, email, sales_to or "—", body)
         return
 
-    msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = smtp_from
-    # Кому: сначала ваша почта (если задана), плюс клиент
     to_list = [x for x in [sales_to, email] if x]
-    msg["To"] = ", ".join(to_list)
-    msg.set_content(body)
-
-    def _send_sync() -> None:
-        with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as smtp:
-            if use_tls:
-                smtp.starttls()
-            if smtp_user and smtp_password:
-                smtp.login(smtp_user, smtp_password)
-            smtp.send_message(msg)
-
-    await asyncio.to_thread(_send_sync)
+    await send_smtp_email(subject=subject, body=body, to_addrs=to_list)
     logger.info("📧 Заявка #%s отправлена: to=%s", request.id, ", ".join(to_list))
 
 

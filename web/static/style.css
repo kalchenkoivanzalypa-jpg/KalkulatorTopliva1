@@ -1,14 +1,18 @@
 :root {
-  --bg: #0f1419;
-  --card: #1a2332;
-  --text: #e7edf4;
-  --muted: #8b9cb3;
-  --accent: #3b82f6;
-  --accent2: #22c55e;
-  --danger: #ef4444;
-  --border: #2d3a4d;
+  /* Палитра ближе к «сайтовому» B2B-виду: можно подкрутить под Тильду через те же переменные */
+  --bg: #0c1118;
+  --bg-mid: #121a24;
+  --card: #161f2e;
+  --text: #e8eef6;
+  --muted: #8a9bb0;
+  --accent: #3d7dd9;
+  --accent-hover: #5b93e8;
+  --accent-warm: #c9a43a;
+  --accent2: #3d9e6a;
+  --danger: #e85d5d;
+  --border: #2a3548;
   --radius: 10px;
-  --font: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+  --font: "Manrope", system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
 }
 
 * {
@@ -19,9 +23,10 @@ body {
   margin: 0;
   min-height: 100vh;
   font-family: var(--font);
-  background: linear-gradient(160deg, #0b0f14 0%, #121a24 40%, #0f1419 100%);
+  background: linear-gradient(165deg, var(--bg) 0%, var(--bg-mid) 45%, #0e141c 100%);
   color: var(--text);
-  line-height: 1.5;
+  line-height: 1.55;
+  letter-spacing: 0.01em;
 }
 
 a {
@@ -60,28 +65,79 @@ body.embed {
 header.site {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 0.75rem;
-  padding: 1rem 0 1.5rem;
+  gap: 1rem;
+  padding: 1.1rem 0 1.35rem;
   border-bottom: 1px solid var(--border);
   margin-bottom: 1.5rem;
+  box-shadow: 0 1px 0 0 rgba(201, 164, 58, 0.12);
+}
+
+.brand-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
 }
 
 .brand {
   font-weight: 700;
-  font-size: 1.15rem;
-  letter-spacing: 0.02em;
+  font-size: 1.2rem;
+  letter-spacing: 0.03em;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.brand:hover {
+  color: var(--accent-warm);
+  text-decoration: none;
+}
+
+.brand-tagline {
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+nav.top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.75rem;
 }
 
 nav.top a {
-  margin-right: 0.85rem;
   color: var(--muted);
-  font-size: 0.95rem;
+  font-size: 0.92rem;
+  font-weight: 500;
 }
 
 nav.top a:hover {
   color: var(--text);
+}
+
+nav.top a.nav-site {
+  color: var(--accent);
+  padding-right: 0.5rem;
+  margin-right: 0.25rem;
+  border-right: 1px solid var(--border);
+}
+
+.site-footer {
+  margin-top: 2.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.88rem;
+}
+
+.site-footer p {
+  margin: 0;
+}
+
+.site-footer a {
+  font-weight: 600;
 }
 
 .card {
@@ -115,12 +171,13 @@ h2 {
   cursor: pointer;
   font-size: 0.95rem;
   font-weight: 600;
-  background: var(--accent);
+  background: linear-gradient(180deg, var(--accent) 0%, #2f68c4 100%);
   color: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
 }
 
 .btn:hover {
-  filter: brightness(1.08);
+  filter: brightness(1.06);
   text-decoration: none;
 }
 
@@ -172,6 +229,11 @@ textarea {
 
 .error {
   color: #fca5a5;
+  margin-top: 0.35rem;
+}
+
+.success {
+  color: #86efac;
   margin-top: 0.35rem;
 }
 
