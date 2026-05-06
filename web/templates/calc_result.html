@@ -10,20 +10,58 @@
   <table>
     <tr><th>Базовая цена ₽/т</th><td>{{ '%.0f'|format(r.base_price_per_ton) }}</td></tr>
     <tr><th>Доставка ₽/т</th><td>{{ '%.0f'|format(r.delivery_cost / r.volume) }} ₽/т</td></tr>
+    <tr><th>Комиссия брокера ₽/т</th><td>{{ '%.0f'|format(r.broker_commission_per_ton) }} ₽/т</td></tr>
     <tr><th><b>Итого ₽/т</b></th><td><b>{{ '%.0f'|format(r.total_price / r.volume) }} ₽/т</b></td></tr>
     <tr><th>Базовая сумма</th><td>{{ '%.0f'|format(r.base_total) }} ₽</td></tr>
     <tr><th>Ставка доставки</th><td>{{ '%.2f'|format(r.rate) }}</td></tr>
     <tr><th>Доставка</th><td>{{ '%.0f'|format(r.delivery_cost) }} ₽</td></tr>
+    <tr><th>Комиссия брокера</th><td>{{ '%.0f'|format(r.broker_commission_total) }} ₽</td></tr>
     <tr><th><b>Итого</b></th><td><b>{{ '%.0f'|format(r.total_price) }} ₽</b></td></tr>
   </table>
   <p class="muted"><i>Ориентировочно. Точное КП — у ООО «НК-Востокнефтепродукт».</i></p>
+
+  {% if r.why_lines %}
+  <details style="margin-top:0.75rem;">
+    <summary>Почему так?</summary>
+    <ul class="muted">
+      {% for line in r.why_lines %}
+      <li>{{ line }}</li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endif %}
 
   {% if logged_in %}
   <form method="post" action="/cabinet/lead" style="margin-top:1rem;">
     <input type="hidden" name="request_id" value="{{ r.request_id }}"/>
     <button class="btn" type="submit">Оставить заявку на КП</button>
   </form>
-  <p class="muted">Заявка уйдёт на ваш email и менеджерам (если настроено).</p>
+  <p class="muted">Заявка уйдёт на ваш email; точное коммерческое предложение предоставим в течение рабочего дня.</p>
+
+  <div style="margin-top:1rem;padding-top:0.75rem;border-top:1px solid var(--border);">
+    <h3 style="margin:0 0 0.5rem 0;">Подписки</h3>
+    <p class="muted" style="margin-top:0;">Можно подписаться на снижение цены по этому базису или на резкие изменения (аномалии) по биржевому коду.</p>
+
+    <form method="post" action="/cabinet/subscribe_from_request_price" style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:end;margin-top:0.5rem;">
+      <input type="hidden" name="next" value="{{ request.url }}"/>
+      <input type="hidden" name="request_id" value="{{ r.request_id }}"/>
+      <label style="display:flex;flex-direction:column;gap:0.25rem;">
+        <span class="muted">Цена ниже, чем (₽/т)</span>
+        <input class="mini-input" name="target_price" value="{{ '%.0f'|format(r.base_price_per_ton) }}" inputmode="decimal" required style="min-width:160px;"/>
+      </label>
+      <button class="btn secondary" type="submit">Подписаться на снижение</button>
+    </form>
+
+    <form method="post" action="/cabinet/subscribe_from_request_anomaly" style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:end;margin-top:0.5rem;">
+      <input type="hidden" name="next" value="{{ request.url }}"/>
+      <input type="hidden" name="request_id" value="{{ r.request_id }}"/>
+      <label style="display:flex;flex-direction:column;gap:0.25rem;">
+        <span class="muted">Порог аномалии (%)</span>
+        <input class="tiny-input" name="threshold_pct" value="3" inputmode="decimal" required style="min-width:120px;"/>
+      </label>
+      <button class="btn secondary" type="submit">Подписаться на аномалию</button>
+    </form>
+  </div>
   {% else %}
   <p><a href="/login?next=/cabinet">Войдите по email</a>, чтобы оформить заявку и подписки.</p>
   {% endif %}

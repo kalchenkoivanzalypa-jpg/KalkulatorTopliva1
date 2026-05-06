@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Сигналы / рейтинг{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Сигналы / рейтинг</h1>
+  <p class="muted">Подбираем лучшие базисы для указанного назначения и показываем 30-дневные метрики по коду.</p>
+
+  <form method="post" action="/analytics/rating/result">
+    <label for="product_id">Топливо</label>
+    <select name="product_id" id="product_id" required>
+      {% for p in products %}
+      <option value="{{ p.id }}">{{ p.name }}</option>
+      {% endfor %}
+    </select>
+
+    <label for="destination">Назначение (НП или ж/д станция)</label>
+    <input type="text" name="destination" id="destination" placeholder="Иркутск" required/>
+
+    <div class="actions">
+      <button class="btn" type="submit">Показать рейтинг</button>
+      <a class="btn secondary" href="/analytics">Назад</a>
+    </div>
+  </form>
+</div>
+{% endblock %}
+

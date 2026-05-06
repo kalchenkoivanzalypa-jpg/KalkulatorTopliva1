@@ -8,6 +8,25 @@
   <div style="margin:1rem 0;padding:0.75rem;border:1px solid var(--border);border-radius:8px;">
     <h2 style="margin:0 0 0.5rem;font-size:1rem;">{{ row.basis_name }} ({{ row.transport }})</h2>
     {{ row.html_block|safe }}
+    {% if logged_in and row.instrument_code %}
+    <div style="margin-top:0.5rem;">
+      <div class="sub-actions">
+        <form method="post" action="/cabinet/subscribe">
+          <input type="hidden" name="next" value="{{ request.url }}"/>
+          <input type="hidden" name="product_id" value="{{ product_id }}"/>
+          <input type="hidden" name="basis_id" value="{{ (basis_ids[loop.index0] if basis_ids else '') }}"/>
+          <input class="mini-input" name="target_price" value="" placeholder="порог ₽/т" inputmode="decimal"/>
+          <button class="btn secondary" type="submit">Цена ↓</button>
+        </form>
+        <form method="post" action="/cabinet/subscribe_anomaly">
+          <input type="hidden" name="next" value="{{ request.url }}"/>
+          <input type="hidden" name="instrument_code" value="{{ row.instrument_code }}"/>
+          <input class="tiny-input" name="threshold_pct" value="3" inputmode="decimal"/>
+          <button class="btn secondary" type="submit">Аномалия</button>
+        </form>
+      </div>
+    </div>
+    {% endif %}
     <form method="post" action="/analytics/order" style="margin-top:0.75rem;">
       <input type="hidden" name="basis_id" value="{{ (basis_ids[loop.index0] if basis_ids else '') }}"/>
       <input type="hidden" name="product_id" value="{{ product_id }}"/>
@@ -15,13 +34,16 @@
       <label for="vol{{ loop.index0 }}">Объём, тонн</label>
       <input type="text" name="volume" id="vol{{ loop.index0 }}" inputmode="decimal" placeholder="60" required/>
       <div class="actions"><button class="btn" type="submit">Оставить заявку на КП</button></div>
-      <p class="muted">Нужен вход по email. Заявка уйдёт на email и менеджерам (если настроено).</p>
+      <p class="muted">Нужен вход по email. После отправки заявка придёт на ваш email; точное коммерческое предложение — в течение рабочего дня.</p>
     </form>
   </div>
   {% endfor %}
+  {% if not logged_in %}
+  <p class="muted"><a href="/login?next=/cabinet">Войдите по email</a>, чтобы оформить подписки.</p>
+  {% endif %}
   {% if res.best_line %}<p class="ok">{{ res.best_line }}</p>{% endif %}
   <details>
-    <summary>5 дней по каждому базису</summary>
+    <summary>10 дней по каждому базису</summary>
     <div class="muted">{{ res.details_html|safe }}</div>
   </details>
   <p><a href="/analytics/compare">← Новое сравнение</a></p>

@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Мои направления{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Мои направления</h1>
+  <p>
+    <a href="/cabinet">← Кабинет</a>
+    · <a href="/cabinet/subscriptions">Подписки</a>
+    · <a href="/logout">Выйти</a>
+  </p>
+
+  {% if ok == 'add' %}<p class="ok">Направление сохранено.</p>{% endif %}
+  {% if ok == 'off' %}<p class="ok">Направление отключено.</p>{% endif %}
+  {% if err == 'empty' %}<p class="error">Введите направление.</p>{% endif %}
+  {% if err == 'dest' %}<p class="error">Не удалось определить координаты. Уточните город/станцию.</p>{% endif %}
+  {% if err == 'notfound' %}<p class="error">Направление не найдено.</p>{% endif %}
+
+  <h2>Добавить</h2>
+  <form method="post" action="/cabinet/destinations/add" class="row">
+    <input name="destination" placeholder="Например: Ванино / ст. Дземги / ЕСР 967600" required />
+    <input name="label" placeholder="Метка (необязательно), напр. «Склад №3»" />
+    <button class="btn" type="submit">Сохранить</button>
+  </form>
+  <p class="muted">Можно вводить город, станцию или ЕСР (6 цифр). Эти направления будут доступны в матрице.</p>
+
+  <h2>Список</h2>
+  {% if rows %}
+  <table>
+    <tr>
+      <th>Направление</th>
+      <th>Метка</th>
+      <th></th>
+    </tr>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.cd.name }}</td>
+      <td>{{ r.ud.label or '—' }}</td>
+      <td style="text-align:right">
+        <form method="post" action="/cabinet/destinations/disable" style="margin:0">
+          <input type="hidden" name="user_destination_id" value="{{ r.ud.id }}" />
+          <button class="btn secondary" type="submit">Убрать</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="muted">Пока нет сохранённых направлений.</p>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% extends "base.html" %}
+{% block title %}Мои направления{% endblock %}
+{% block content %}
+<div class="card">
+  <p>
+    <a href="/cabinet">← Кабинет</a>
+    · <a href="/cabinet/subscriptions">Подписки</a>
+    · вы вошли как <b>{{ user.email }}</b>
+  </p>
+  <h1>Мои направления</h1>
+  <p class="muted">Сохраните частые точки доставки, чтобы быстро выбирать их в матрице.</p>
+
+  <form method="post" action="/cabinet/destinations/add" class="row" style="gap:0.75rem;flex-wrap:wrap;align-items:end;margin-top:0.75rem;">
+    <div style="flex:2;min-width:260px;">
+      <label>Направление</label>
+      <input name="destination" placeholder="Напр. Ванино / ст. Кириши / ЕСР 045209" required/>
+    </div>
+    <div style="flex:1;min-width:200px;">
+      <label>Метка (опционально)</label>
+      <input name="label" placeholder="Напр. Склад клиента"/>
+    </div>
+    <div>
+      <button class="btn" type="submit">Сохранить</button>
+    </div>
+  </form>
+</div>
+
+<div class="card" style="margin-top:1rem;">
+  <h2>Список</h2>
+  {% if not items %}
+    <p class="muted">Пока нет направлений. Добавьте первое выше.</p>
+  {% else %}
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Название</th>
+            <th class="muted">Координаты</th>
+            <th class="muted">Действия</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for it in items %}
+            {% set ud = it.ud %}
+            {% set cd = it.cd %}
+            <tr>
+              <td>
+                <div><b>{{ it.label }}</b></div>
+                {% if ud.label %}
+                  <div class="muted">{{ cd.name }}</div>
+                {% endif %}
+              </td>
+              <td class="muted">{{ '%.4f'|format(cd.latitude) }}, {{ '%.4f'|format(cd.longitude) }}</td>
+              <td>
+                <form method="post" action="/cabinet/destinations/disable" class="inline-form">
+                  <input type="hidden" name="ud_id" value="{{ ud.id }}"/>
+                  <button class="btn secondary" type="submit">Убрать</button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+</div>
+{% endblock %}
+

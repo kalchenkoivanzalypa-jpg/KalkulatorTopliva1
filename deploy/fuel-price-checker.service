@@ -1,0 +1,21 @@
+[Unit]
+Description=Fuel background price checker (subscriptions + daily digest)
+After=network.target
+
+[Service]
+Type=simple
+User=fuel
+Group=fuel
+WorkingDirectory=/opt/fuel_bot
+EnvironmentFile=/opt/fuel_bot/.env
+ExecStart=/opt/fuel_bot/venv/bin/python3.11 /opt/fuel_bot/scripts/run_price_checker.py
+Restart=always
+RestartSec=3
+
+# Hardening (same spirit as other units)
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+

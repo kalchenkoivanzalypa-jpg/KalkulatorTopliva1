@@ -9,7 +9,7 @@ import asyncio
 import logging
 from db.database import Basis, Product, get_session
 from sqlalchemy import select
-from instruments import INSTRUMENTS
+from utils.instruments import INSTRUMENTS
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

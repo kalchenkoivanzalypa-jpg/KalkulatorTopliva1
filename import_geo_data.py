@@ -69,6 +69,16 @@ def _float(v: Any) -> Optional[float]:
         return None
 
 
+def _norm_esr_key(val: Any) -> str:
+    """6-значный ключ ЕСР для upsert (ведущие нули, без '.0' из Excel)."""
+    if val is None:
+        return ""
+    s = str(val).strip().replace(" ", "").replace(".0", "")
+    if not s.isdigit() or len(s) > 6:
+        return ""
+    return s.zfill(6)
+
+
 def _transport(val: Any) -> str:
     if val is None or (isinstance(val, float) and pd.isna(val)):
         return "rail"
@@ -89,6 +99,16 @@ async def upsert_rail_stations(session, df: pd.DataFrame, replace_all: bool = Fa
         await session.execute(delete(RailStation))
 
     df = _rename_df(df)
+    # Карта ЕСР → id: при импорте Книги 2 не плодим дубликаты, обновляем строку с тем же кодом
+    # (имя в Книге 2 может отличаться от «ручной» строки базиса).
+    esr_key_to_id: dict[str, int] = {}
+    if not replace_all:
+        qm = await session.execute(select(RailStation.id, RailStation.esr_code).where(RailStation.esr_code.isnot(None)))
+        for rid, ec in qm.all():
+            k = _norm_esr_key(ec)
+            if k and k not in esr_key_to_id:
+                esr_key_to_id[k] = int(rid)
+
     n = 0
     for _, raw in df.iterrows():
         row = raw.to_dict()
@@ -107,27 +127,39 @@ async def upsert_rail_stations(session, df: pd.DataFrame, replace_all: bool = Fa
         if esr_s == "" or esr_s.lower() == "nan":
             esr_s = None
 
-        q = await session.execute(select(RailStation).where(RailStation.name == str(name).strip()))
-        existing = q.scalar_one_or_none()
+        existing = None
+        esr_k = _norm_esr_key(esr_s) if esr_s else ""
+        if esr_k and esr_k in esr_key_to_id:
+            existing = await session.get(RailStation, esr_key_to_id[esr_k])
+        # ВАЖНО: если ЕСР задан, НЕ матчим по имени — иначе разные станции с одинаковым именем
+        # (частая ситуация) сольются в одну запись.
+        if existing is None and not esr_k:
+            q = await session.execute(select(RailStation).where(RailStation.name == str(name).strip()))
+            existing = q.scalar_one_or_none()
         if existing:
+            existing.name = str(name).strip()
             existing.latitude = lat
             existing.longitude = lon
             existing.esr_code = esr_s
             existing.settlement_name = str(settlement).strip() if settlement else None
             existing.region = str(region).strip() if region else None
             existing.is_active = True
+            if esr_k:
+                esr_key_to_id[esr_k] = int(existing.id)
         else:
-            session.add(
-                RailStation(
-                    name=str(name).strip(),
-                    esr_code=esr_s,
-                    latitude=lat,
-                    longitude=lon,
-                    settlement_name=str(settlement).strip() if settlement else None,
-                    region=str(region).strip() if region else None,
-                    is_active=True,
-                )
+            new_st = RailStation(
+                name=str(name).strip(),
+                esr_code=esr_s,
+                latitude=lat,
+                longitude=lon,
+                settlement_name=str(settlement).strip() if settlement else None,
+                region=str(region).strip() if region else None,
+                is_active=True,
             )
+            session.add(new_st)
+            await session.flush()
+            if esr_k and new_st.id:
+                esr_key_to_id.setdefault(esr_k, int(new_st.id))
         n += 1
     await session.commit()
     return n
@@ -135,6 +167,7 @@ async def upsert_rail_stations(session, df: pd.DataFrame, replace_all: bool = Fa
 
 async def update_basises_from_df(session, df: pd.DataFrame) -> int:
     from db.database import Basis
+    from utils.rail_logistics import normalize_esr_to_6
 
     # Старая SQLite-БД без колонок Ж/Д — добавляем их до первого SELECT по Basis
     try:
@@ -203,7 +236,8 @@ async def update_basises_from_df(session, df: pd.DataFrame) -> int:
         if rname:
             b.rail_station_name = clean_excel_text(rname)
         if resr:
-            b.rail_esr = str(resr).strip().replace(" ", "")
+            canon = normalize_esr_to_6(resr)
+            b.rail_esr = canon or str(resr).strip().replace(" ", "")
         if rlat is not None:
             b.rail_latitude = rlat
         if rlon is not None:

@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}5 базисов × 5 направлений — направления{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Направления (до {{ max_destinations }})</h1>
+  <p class="muted">Шаг 3 — выберите сохранённые направления и/или добавьте вручную (по одной строке).</p>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+  <p class="muted">Выбранные базисы:</p>
+  <ul>
+    {% for bid, bname in chosen_basises %}
+      <li>{{ bname }} (id {{ bid }})</li>
+    {% endfor %}
+  </ul>
+
+  <form method="post" action="/analytics/matrix/result">
+    {% if logged_in %}
+      <label for="dest_city_ids">Сохранённые направления</label>
+      {% if saved %}
+        <select id="dest_city_ids" name="dest_city_ids" multiple size="{{ 6 if saved|length > 6 else (saved|length + 1) }}">
+          {% for s in saved %}
+            <option value="{{ s.city_id }}">{{ s.label }}</option>
+          {% endfor %}
+        </select>
+        <p class="muted">Можно выбрать несколько (Ctrl/⌘).</p>
+      {% else %}
+        <p class="muted">У вас пока нет сохранённых направлений. Добавьте их в <a href="/cabinet/destinations">кабинете</a>.</p>
+      {% endif %}
+    {% else %}
+      <p class="muted"><a href="/login?next=/analytics/matrix/destinations">Войдите по email</a>, чтобы выбирать направления из сохранённых.</p>
+    {% endif %}
+
+    <label for="dest_texts">Добавить вручную (1–{{ max_destinations }} строк)</label>
+    <textarea id="dest_texts" name="dest_texts" rows="5" placeholder="Напр:\nВанино\nст. Кириши\nЕСР 045209"></textarea>
+
+    <div class="actions"><button class="btn" type="submit">Построить матрицу</button></div>
+  </form>
+
+  <p><a href="/analytics/matrix/basis-search">← К базисам</a></p>
+</div>
+{% endblock %}

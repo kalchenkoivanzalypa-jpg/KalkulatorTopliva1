@@ -52,9 +52,11 @@ def _clean_station_name(name: str) -> str:
 
 
 def _extract_esr(raw: str) -> Optional[str]:
-    m = re.search(r"\b(\d{6})\b", raw or "")
+    m = re.search(r"\b(\d{5,6})\b", raw or "")
     if m:
-        return m.group(1)
+        d = m.group(1)
+        if d.isdigit() and len(d) in (5, 6):
+            return d.zfill(6)
     return None
 
 
@@ -200,6 +202,7 @@ async def build_dataset(kniga2_path: Path, seed_path: Path) -> pd.DataFrame:
     basis_esr_coords = await _load_basis_esr_coords()
 
     by_esr: Dict[str, Dict[str, object]] = {}
+    skipped_no_coords = 0
     for station_name, esr in pairs:
         # 0) Приоритет: если ESR уже используется в basis с rail-координатами
         # (как Суховская=932207 для Ангарска), берём именно эти координаты.
@@ -220,6 +223,7 @@ async def build_dataset(kniga2_path: Path, seed_path: Path) -> pd.DataFrame:
         settlement = _guess_settlement(station_name)
         pick = _pick_coords(station_name, settlement, city_coords, seed_coords)
         if not pick:
+            skipped_no_coords += 1
             continue
         lat, lon, settlement_name = pick
         # дедуп по ЕСР: если повторяется, оставляем первый
@@ -235,6 +239,11 @@ async def build_dataset(kniga2_path: Path, seed_path: Path) -> pd.DataFrame:
         }
 
     rows = list(by_esr.values())
+    print(
+        f"Книга 2: строк с кодом {len(pairs)}, "
+        f"с координатами (city_destinations/seed/basis) {len(rows)}, "
+        f"без координат пропущено {skipped_no_coords}"
+    )
     out = pd.DataFrame(rows)
     return out
 

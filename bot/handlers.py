@@ -3,6 +3,8 @@
 import logging
 import math
 import os
+import asyncio
+from collections import defaultdict
 from datetime import datetime
 from typing import Optional
 
@@ -44,7 +46,7 @@ from db.database import (
 )
 from rail_tariff import (
     calculate_delivery_cost as calculate_rail_delivery_cost,
-    compute_rail_tariff_distance_km,
+    compute_rail_tariff_distance_km_cached,
     compute_rail_tariff_distance_debug,
     get_rail_rate,
 )
@@ -56,13 +58,29 @@ from utils import (
     get_delivery_rate,
     normalize_city_name_key,
 )
+from utils.market_price_freshness import (
+    CALC_MAX_STALE_SESSIONS,
+    CALC_MAX_STALE_TRADING_DAYS,
+    is_basis_price_fresh_for_calc,
+    load_recent_spimex_trade_dates,
+    max_spimex_trade_date_by_codes,
+    max_spimex_real_trade_date_by_codes,
+    select_best_pbp_among_candidates,
+    today_for_exchange,
+)
 from utils.rail_logistics import (
     basis_rail_origin_coords,
     basis_rail_origin_label,
+    coords_from_rail_station,
+    extract_first_esr_code,
+    fixed_delivery_per_ton_override,
+    find_rail_station_by_esr_code,
     find_rail_station_for_destination,
     is_sakhalin_geo_point,
     is_sakhalin_destination,
     nearest_rail_station_to_point,
+    rail_dest_station_for_city_key,
+    resolved_rail_dest_station_for_destination,
     sakhalin_ferry_surcharge_per_ton,
     sakhalin_ferry_surcharge_total,
 )
@@ -143,6 +161,7 @@ async def find_nearest_basises(
     max_distance_auto: float = MAX_AUTO_DISTANCE_KM,
     destination_name_key: Optional[str] = None,
     destination_raw: Optional[str] = None,
+    rail_only: bool = False,
 ):
     """
     Находит ближайшие базисы с ценами для указанного продукта
@@ -154,149 +173,326 @@ async def find_nearest_basises(
         destination_name_key: нормализованное имя НП (для привязки к станции по названию)
 
     Авто: расстояние «по прямой» от координат клиента до координат базиса.
-    Ж/Д: станция назначения — по названию (если есть в справочнике) или ближайшая к координатам;
-         километраж — ТР №4 (если подключён и есть коды ЕСР) иначе оценка по гео.
+    Ж/Д: станция назначения — явные привязки города→узел (напр. Якутск→Нижний Бестях), иначе по названию
+         в справочнике, иначе ближайшая к координатам; километраж — ТР №4 при наличии ЕСР, иначе гео.
     """
-    dest_station = None
-    if destination_name_key or destination_raw:
-        dest_station = await find_rail_station_for_destination(
+
+    def _rail_distance_limit_exempt(basis_obj: Basis) -> bool:
+        """
+        Точечное исключение для Ж/Д фильтра по расстоянию.
+        Нужно для базиса «ст. Комбинатская», где плечо часто > 6000 км.
+        """
+        try:
+            name_key = normalize_city_name_key(str(getattr(basis_obj, "name", "") or ""))
+        except Exception:
+            name_key = ""
+        return name_key == "комбинатская"
+    # Сначала явные «город → ж/д узел» (иначе «Якутск» может нестрого попасть в «Якутский (рзд)» и т.п.).
+    station_by_city_terminal = None
+    if destination_name_key:
+        station_by_city_terminal = await rail_dest_station_for_city_key(
+            session, destination_name_key
+        )
+
+    # Станция «по введённому названию» (если нет явной городской привязки выше).
+    station_by_name = None
+    if station_by_city_terminal is None and (destination_name_key or destination_raw):
+        st = await find_rail_station_for_destination(
             session,
             destination_raw or "",
             destination_name_key or "",
         )
-        if dest_station is not None:
-            logger.info(
-                "🚉 Станция назначения найдена по названию: %s (settlement: %s)",
-                dest_station.name,
-                getattr(dest_station, "settlement_name", None),
-            )
-    if dest_station is None:
-        # Фоллбек: ближайшая станция к координатам точки назначения
-        dest_station = await nearest_rail_station_to_point(session, city_lat, city_lon)
+        if st is not None:
+            try:
+                dd = calculate_distance(
+                    float(city_lat),
+                    float(city_lon),
+                    float(getattr(st, "latitude", 0.0) or 0.0),
+                    float(getattr(st, "longitude", 0.0) or 0.0),
+                )
+            except Exception:
+                dd = 999999.0
+            if dd > 250.0:
+                logger.info(
+                    "🚉 Станция по названию слишком далеко (%.0f км) — игнорируем матч: %s",
+                    dd,
+                    getattr(st, "name", None),
+                )
+            else:
+                station_by_name = st
+                logger.info(
+                    "🚉 Станция назначения найдена по названию: %s (settlement: %s)",
+                    st.name,
+                    getattr(st, "settlement_name", None),
+                )
+
+    nearest_station = None
+    if station_by_name is None and station_by_city_terminal is None:
+        cand = await nearest_rail_station_to_point(session, city_lat, city_lon)
+        if cand is not None:
+            try:
+                d_km = calculate_distance(
+                    float(city_lat),
+                    float(city_lon),
+                    float(cand.latitude),
+                    float(cand.longitude),
+                )
+            except Exception:
+                d_km = 999999.0
+            if d_km <= 250.0:
+                nearest_station = cand
+            else:
+                logger.info(
+                    "🚉 Фоллбек-станция слишком далеко (%.0f км) — считаем по координатам назначения без станции",
+                    d_km,
+                )
+
+    rail_dest_station = station_by_city_terminal or station_by_name or nearest_station
+
     sakhalin_dest = is_sakhalin_destination(
         destination_raw or "",
         destination_name_key or "",
-        dest_station,
+        rail_dest_station,
     )
 
-    # Если станция назначения найдена — используем её координаты как координаты точки назначения
-    # и для авто (оценка «по прямой»). Это важно, когда пользователь вводит именно станцию.
+    # Координаты для авто: только если пользователь «приземлился» на станцию по имени или гео-фоллбеку;
+    # при привязке города к узлу (Якутск→Бестях) авто считаем до центра города.
     dest_lat_eff = city_lat
     dest_lon_eff = city_lon
-    if dest_station is not None and getattr(dest_station, "latitude", None) is not None and getattr(dest_station, "longitude", None) is not None:
+    if station_by_name is not None and getattr(station_by_name, "latitude", None) is not None:
         try:
-            dest_lat_eff = float(dest_station.latitude)
-            dest_lon_eff = float(dest_station.longitude)
+            dest_lat_eff = float(station_by_name.latitude)
+            dest_lon_eff = float(station_by_name.longitude)
+        except Exception:
+            dest_lat_eff = city_lat
+            dest_lon_eff = city_lon
+    elif nearest_station is not None and getattr(nearest_station, "latitude", None) is not None:
+        try:
+            dest_lat_eff = float(nearest_station.latitude)
+            dest_lon_eff = float(nearest_station.longitude)
         except Exception:
             dest_lat_eff = city_lat
             dest_lon_eff = city_lon
 
-    # Получаем все цены для продукта
-    prices_result = await session.execute(
+    # Получаем все цены для продукта.
+    # Важно: для одного (product_id, basis_id) может быть несколько строк (разные instrument_code).
+    # Схлопываем в одну строку на базис: только среди кодов, которые проходят свежесть по бирже;
+    # если таких несколько — берём по последней дате реальной торговли (spimex), затем last_updated.
+    # АИ-100-К5: «10000» в бюллетене часто “заглушка” — считаем, что цены нет.
+    exclude_stub_10000 = False
+    try:
+        pr = await session.get(Product, int(product_id))
+        if canonical_fuel_display_name(getattr(pr, "name", "") or "") == "АИ-100-К5":
+            exclude_stub_10000 = True
+    except Exception:
+        exclude_stub_10000 = False
+
+    q_prices = (
         select(ProductBasisPrice, Basis)
         .join(Basis, ProductBasisPrice.basis_id == Basis.id)
         .where(ProductBasisPrice.product_id == product_id)
+        .where(ProductBasisPrice.is_active.is_(True))
         .where(ProductBasisPrice.current_price > 0)
         .where(Basis.latitude != 0)
         .where(Basis.longitude != 0)
         .where(Basis.is_active == True)
+    )
+    if exclude_stub_10000:
+        q_prices = q_prices.where(ProductBasisPrice.current_price != 10000)
+
+    prices_result = await session.execute(
+        q_prices
     )
     
     prices_with_basises = prices_result.all()
     
     if not prices_with_basises:
         return []
-    
-    # Рассчитываем расстояние и полную стоимость для каждого
+
+    # Дубликаты по basis_id: грузим биржевые даты по всем instrument_code сразу.
+    codes_for_fresh = {
+        str(p.instrument_code).strip().upper()
+        for p, _ in prices_with_basises
+        if getattr(p, "instrument_code", None)
+    }
+    spimex_any_dates = await max_spimex_trade_date_by_codes(session, codes_for_fresh)
+    spimex_last_dates = await max_spimex_real_trade_date_by_codes(session, codes_for_fresh)
+    recent_dates = await load_recent_spimex_trade_dates(session, limit=180)
+    today_d = today_for_exchange()
+
+    by_basis: dict[int, list[tuple[ProductBasisPrice, Basis]]] = defaultdict(list)
+    for price, basis in prices_with_basises:
+        by_basis[int(basis.id)].append((price, basis))
+
+    def _pick_price_row_for_basis(
+        cands: list[tuple[ProductBasisPrice, Basis]],
+    ) -> tuple[ProductBasisPrice, Basis] | None:
+        pbps_only = [p for p, _ in cands]
+        best_p = select_best_pbp_among_candidates(
+            pbps_only,
+            spimex_any_dates=spimex_any_dates,
+            spimex_last_dates=spimex_last_dates,
+            recent_trade_dates=recent_dates,
+            today_d=today_d,
+        )
+        if best_p is None:
+            return None
+        for p, b in cands:
+            if int(getattr(p, "id", 0) or 0) == int(getattr(best_p, "id", 0) or 0):
+                return (p, b)
+        return None
+
+    _n_basis_before = len(by_basis)
+    merged: list[tuple[ProductBasisPrice, Basis]] = []
+    dropped_no_fresh = 0
+    for _bid, cands in by_basis.items():
+        picked = _pick_price_row_for_basis(cands)
+        if picked is None:
+            dropped_no_fresh += 1
+            continue
+        merged.append(picked)
+
+    prices_with_basises = merged
+
+    if dropped_no_fresh:
+        logger.info(
+            "Скрыто базисов: ни один instrument_code не прошёл свежесть (%s из %s базисов)",
+            dropped_no_fresh,
+            _n_basis_before,
+        )
+    if not prices_with_basises:
+        return []
+
+    product_for_delivery = await session.get(Product, int(product_id))
+    pn = getattr(product_for_delivery, "name", None) if product_for_delivery else None
+    canon_del = canonical_fuel_display_name(str(pn or ""))
+    vol_rail_preview = (
+        65.0
+        if (
+            canon_del.startswith("ДТ-")
+            or canon_del == "Мазут топочный М100"
+            or canon_del == "ТС-1"
+        )
+        else 60.0
+    )
+
+    # Рассчитываем расстояние и полную стоимость для каждого (надёжная версия без агрессивного отсева).
     basises_with_details = []
     for price, basis in prices_with_basises:
+        if rail_only and basis.transport_type != "rail":
+            continue
         if sakhalin_dest and basis.transport_type == "auto":
             logger.info(
                 "⏭️ Авто базис %s исключен: Сахалин доступен только по Ж/Д",
                 basis.name,
             )
             continue
+
         if basis.transport_type == "rail":
             o_lat, o_lon = basis_rail_origin_coords(basis)
             if (
-                dest_station is not None
+                rail_dest_station is not None
                 and (
                     not sakhalin_dest
-                    or is_sakhalin_geo_point(float(dest_station.latitude), float(dest_station.longitude))
+                    or is_sakhalin_geo_point(
+                        float(rail_dest_station.latitude), float(rail_dest_station.longitude)
+                    )
                 )
             ):
-                d_lat, d_lon = float(dest_station.latitude), float(dest_station.longitude)
+                d_lat, d_lon = float(rail_dest_station.latitude), float(rail_dest_station.longitude)
             else:
                 d_lat, d_lon = city_lat, city_lon
-            dist = compute_rail_tariff_distance_km(
-                o_lat,
-                o_lon,
-                d_lat,
-                d_lon,
-                origin_esr=(str(basis.rail_esr).strip() if getattr(basis, "rail_esr", None) else None),
-                dest_esr=(
-                    str(dest_station.esr_code).strip()
-                    if dest_station and getattr(dest_station, "esr_code", None)
-                    else None
-                ),
-            )
+            try:
+                dist = await asyncio.to_thread(
+                    compute_rail_tariff_distance_km_cached,
+                    o_lat,
+                    o_lon,
+                    d_lat,
+                    d_lon,
+                    (str(basis.rail_esr).strip() if getattr(basis, "rail_esr", None) else None),
+                    (
+                        str(rail_dest_station.esr_code).strip()
+                        if rail_dest_station and getattr(rail_dest_station, "esr_code", None)
+                        else None
+                    ),
+                )
+            except Exception as exc:
+                # TR4_STRICT: skip rail basis if cannot compute tariff distance
+                logger.warning("TR4 distance failed for basis=%s (%s): %s", basis.name, getattr(basis, "rail_esr", None), exc)
+                continue
         else:
-            dist = calculate_distance(
-                dest_lat_eff, dest_lon_eff, basis.latitude, basis.longitude
-            )
+            dist = calculate_distance(dest_lat_eff, dest_lon_eff, basis.latitude, basis.longitude)
 
         # Фильтр по расстоянию в зависимости от типа транспорта
-        if basis.transport_type == 'rail':
-            if dist > max_distance_rail:
-                logger.info(f"⏭️ Ж/Д базис {basis.name} исключен (расстояние {dist:.0f} км > {max_distance_rail} км)")
-                continue
-        else:  # auto
-            if dist > max_distance_auto:
-                logger.info(f"⏭️ Авто базис {basis.name} исключен (расстояние {dist:.0f} км > {max_distance_auto} км)")
-                continue
-        
-        # Получаем ставку доставки для этого типа транспорта
-        rate = await get_delivery_rate(dist, basis.transport_type, session)
-        
-        # Рассчитываем стоимость доставки за тонну
-        delivery_cost_per_ton = dist * rate
         if basis.transport_type == "rail":
-            delivery_cost_per_ton += sakhalin_ferry_surcharge_per_ton(sakhalin_dest)
-        
-        # Полная стоимость за тонну (цена + доставка)
+            if dist > max_distance_rail and not _rail_distance_limit_exempt(basis):
+                continue
+        else:
+            if dist > max_distance_auto:
+                continue
+
+        if basis.transport_type == "rail":
+            fixed_pt = fixed_delivery_per_ton_override(
+                getattr(basis, "name", "") or "",
+                destination_name_key or "",
+            )
+            if fixed_pt is not None:
+                delivery_cost_per_ton = float(fixed_pt)
+                rate = float(delivery_cost_per_ton) / float(dist) if float(dist) > 0 else 0.0
+            else:
+                rr = await asyncio.to_thread(
+                    calculate_rail_delivery_cost,
+                    float(dist),
+                    float(vol_rail_preview),
+                    pn,
+                )
+                delivery_cost_per_ton = float(rr["cost_per_ton"])
+                rate = float(rr["rate_per_ton_km"])
+            delivery_cost_per_ton += float(sakhalin_ferry_surcharge_per_ton(sakhalin_dest) or 0.0)
+        else:
+            rate = await get_delivery_rate(dist, basis.transport_type, session)
+            delivery_cost_per_ton = dist * rate
+
         total_cost_per_ton = price.current_price + delivery_cost_per_ton
-        
-        basises_with_details.append({
-            'distance': dist,
-            'basis': basis,
-            'price': price,
-            'transport_type': basis.transport_type,
-            'rate': rate,
-            'delivery_cost_per_ton': delivery_cost_per_ton,
-            'total_cost_per_ton': total_cost_per_ton,
-            'rail_dest_station_id': (
-                dest_station.id
-                if basis.transport_type == "rail" and dest_station is not None
-                else None
-            ),
-            'rail_dest_station_name': (
-                dest_station.name
-                if basis.transport_type == "rail" and dest_station is not None
-                else None
-            ),
-            'rail_origin_station_name': (
-                basis_rail_origin_label(basis)
-                if basis.transport_type == "rail"
-                else None
-            ),
-            'is_sakhalin_destination': sakhalin_dest,
-            'ferry_surcharge_per_ton': (
-                sakhalin_ferry_surcharge_per_ton(sakhalin_dest)
-                if basis.transport_type == "rail"
-                else 0.0
-            ),
-        })
+
+        basises_with_details.append(
+            {
+                "distance": dist,
+                "basis": basis,
+                "price": price,
+                "transport_type": basis.transport_type,
+                "rate": rate,
+                "delivery_cost_per_ton": delivery_cost_per_ton,
+                "total_cost_per_ton": total_cost_per_ton,
+                "rail_dest_station_id": (
+                    rail_dest_station.id
+                    if basis.transport_type == "rail" and rail_dest_station is not None
+                    else None
+                ),
+                "rail_dest_station_name": (
+                    rail_dest_station.name
+                    if basis.transport_type == "rail" and rail_dest_station is not None
+                    else None
+                ),
+                "rail_origin_station_name": (
+                    basis_rail_origin_label(basis) if basis.transport_type == "rail" else None
+                ),
+                "is_sakhalin_destination": sakhalin_dest,
+                "ferry_surcharge_per_ton": (
+                    sakhalin_ferry_surcharge_per_ton(sakhalin_dest) if basis.transport_type == "rail" else 0.0
+                ),
+            }
+        )
     
+    # Дедуп: один базис может попасть несколько раз (например, несколько ценовых строк) — берём лучший (мин. цена+доставка)
+    best_by_basis: dict[int, dict] = {}
+    for it in basises_with_details:
+        bid = int(it["basis"].id)
+        prev = best_by_basis.get(bid)
+        if prev is None or float(it["total_cost_per_ton"]) < float(prev["total_cost_per_ton"]):
+            best_by_basis[bid] = it
+    basises_with_details = list(best_by_basis.values())
+
     # Сортируем по полной стоимости (цена + доставка)
     basises_with_details.sort(key=lambda x: x['total_cost_per_ton'])
     
@@ -414,6 +610,7 @@ async def send_order_to_email(email: str, request: UserRequest, session):
 
     # Куда слать заявку (ваша почта продаж). Если не задано — шлём только клиенту.
     sales_to = (os.getenv("SALES_TO_EMAIL") or "").strip()
+    sales_cc_raw = (os.getenv("SALES_CC_EMAILS") or "").strip()
     smtp_host = (os.getenv("SMTP_HOST") or "").strip()
 
     # Собираем карточку заявки
@@ -449,7 +646,25 @@ async def send_order_to_email(email: str, request: UserRequest, session):
         logger.info("📧 Заявка #%s: to=%s sales_to=%s\n%s", request.id, email, sales_to or "—", body)
         return
 
-    to_list = [x for x in [sales_to, email] if x]
+    cc_list: list[str] = []
+    if sales_cc_raw:
+        for part in sales_cc_raw.replace(";", ",").split(","):
+            p = (part or "").strip()
+            if p:
+                cc_list.append(p)
+
+    # Клиент + внутренняя почта + CC (доп. внутренние адреса).
+    seen: set[str] = set()
+    to_list: list[str] = []
+    for addr in [sales_to, *cc_list, email]:
+        a = (addr or "").strip()
+        if not a:
+            continue
+        k = a.lower()
+        if k in seen:
+            continue
+        seen.add(k)
+        to_list.append(a)
     await send_smtp_email(subject=subject, body=body, to_addrs=to_list)
     logger.info("📧 Заявка #%s отправлена: to=%s", request.id, ", ".join(to_list))
 
@@ -506,12 +721,12 @@ async def cmd_start(message: Message, state: FSMContext):
         await session.close()
     
     welcome_text = (
-        "👋 Добро пожаловать в бот расчета стоимости ГСМ!\n\n"
-        "Я помогу вам быстро рассчитать стоимость топлива с доставкой "
-        "до любого населенного пункта России. Просто введите город, село или "
-        "поселок назначения, и я найду ближайшие базисы с актуальными ценами.\n\n"
-        "🔍 Нажмите «Новый расчет», чтобы начать.\n"
-        "📋 В разделе «Мои подписки» можно управлять уведомлениями о снижении цен."
+        "👋 Добро пожаловать в калькулятор нефтепродуктов ООО «НК-Востокнефтепродукт».\n\n"
+        "Рассчитаем ориентировочную стоимость с доставкой до населённого пункта или ж/д станции. "
+        "Итог в боте предварительный; точное коммерческое предложение — по заявке у компании.\n\n"
+        "Основной сайт: https://nk-vsnp.ru/\n"
+        "🔍 «Новый расчёт» — начать подбор.\n"
+        "📋 «Мои подписки» — уведомления о снижении цен."
     )
     
     await message.answer(
@@ -559,8 +774,8 @@ async def process_product_selection(callback: CallbackQuery, state: FSMContext):
     
     # Отправляем новое сообщение с запросом города
     await callback.message.answer(
-        "🏙️ Введите населенный пункт назначения (город, село, поселок):\n"
-        "Например: Москва, Санкт-Петербург, Краснодар, Новосибирск",
+        "🏙️ Введите населённый пункт или ж/д станцию:\n"
+        "Например: Москва, ст. Тында, Нижний Бестях, или 6-значный код ЕСР станции (910000).",
         reply_markup=get_cancel_keyboard()
     )
     await state.set_state(CalculationStates.waiting_for_destination)
@@ -605,9 +820,15 @@ async def process_destination(message: Message, state: FSMContext):
             reply_markup=get_cancel_keyboard()
         )
         
-        # Получаем координаты населенного пункта
-        coords = await get_coordinates_from_city(destination, session)
-        
+        # Получаем координаты: сначала 6-значный ЕСР (иначе get_coordinates может «шуметь» по БД).
+        coords = None
+        esr_hint = extract_first_esr_code(destination, destination_key)
+        if esr_hint:
+            st_esr = await find_rail_station_by_esr_code(session, esr_hint)
+            coords = coords_from_rail_station(st_esr)
+        if not coords:
+            coords = await get_coordinates_from_city(destination, session)
+
         if not coords:
             # Фоллбек: пользователь мог ввести ЖД станцию (а не населённый пункт).
             dest_station_for_coords = await find_rail_station_for_destination(
@@ -619,13 +840,20 @@ async def process_destination(message: Message, state: FSMContext):
                 await message.answer(
                     f"❌ Не удалось определить координаты '{destination}'. "
                     f"Проверьте название и попробуйте снова.\n\n"
-                    f"Примеры: Москва, Санкт-Петербург, Краснодар, Новосибирск\n"
-                    f"Или попробуйте указать населённый пункт, к которому относится станция.",
+                    f"Примеры: Москва, ст. Тында, Нижний Бестях, код ЕСР 910000\n"
+                    f"Или укажите ближайший крупный пункт / станцию из справочника.",
                     reply_markup=get_cancel_keyboard()
                 )
                 return
-            dest_lat = float(dest_station_for_coords.latitude)
-            dest_lon = float(dest_station_for_coords.longitude)
+            c_fb = coords_from_rail_station(dest_station_for_coords)
+            if c_fb is None:
+                await message.answer(
+                    f"❌ Для '{destination}' станция есть в справочнике, но без координат в базе. "
+                    f"Укажите другой пункт или сообщите администратору.",
+                    reply_markup=get_cancel_keyboard(),
+                )
+                return
+            dest_lat, dest_lon = c_fb
         else:
             dest_lat, dest_lon = coords
 
@@ -915,15 +1143,14 @@ async def calculate_final_result(message: Message, state: FSMContext, selected: 
                     d_lat, d_lon = float(destination.latitude), float(destination.longitude)
             else:
                 d_lat, d_lon = float(destination.latitude), float(destination.longitude)
-            distance_km = compute_rail_tariff_distance_km(
+            distance_km = await asyncio.to_thread(
+                compute_rail_tariff_distance_km_cached,
                 o_lat,
                 o_lon,
                 d_lat,
                 d_lon,
-                origin_esr=(
-                    str(basis.rail_esr).strip() if getattr(basis, "rail_esr", None) else None
-                ),
-                dest_esr=(
+                (str(basis.rail_esr).strip() if getattr(basis, "rail_esr", None) else None),
+                (
                     str(dest_station.esr_code).strip()
                     if dest_station and getattr(dest_station, "esr_code", None)
                     else None
@@ -933,7 +1160,11 @@ async def calculate_final_result(message: Message, state: FSMContext, selected: 
         # Расчет стоимости доставки
         if final_transport == 'rail':
             # Для Ж/Д: стоимость от расстояния (ТР №4 или оценка) и ставки
-            rail_result = calculate_rail_delivery_cost(distance_km, volume)
+            rail_result = calculate_rail_delivery_cost(
+                distance_km,
+                volume,
+                (product.name if product else None),
+            )
             delivery_cost = rail_result['total_cost']
             ferry_surcharge_total = sakhalin_ferry_surcharge_total(
                 volume,
@@ -1388,7 +1619,9 @@ async def explain_why(callback: CallbackQuery):
         # Пытаемся найти станцию назначения по названию (для ж/д)
         dest_raw = dest.name
         dest_key = normalize_city_name_key(dest_raw)
-        dest_station = await find_rail_station_for_destination(session, dest_raw, dest_key)
+        dest_station = await resolved_rail_dest_station_for_destination(
+            session, dest_raw, dest_key
+        )
         sakhalin_dest = is_sakhalin_destination(dest_raw, dest_key, dest_station)
 
         if basis.transport_type == "rail":
@@ -1484,7 +1717,9 @@ async def explain_why_tech(callback: CallbackQuery):
 
         dest_raw = dest.name
         dest_key = normalize_city_name_key(dest_raw)
-        dest_station = await find_rail_station_for_destination(session, dest_raw, dest_key)
+        dest_station = await resolved_rail_dest_station_for_destination(
+            session, dest_raw, dest_key
+        )
         sakhalin_dest = is_sakhalin_destination(dest_raw, dest_key, dest_station)
 
         if basis.transport_type == "rail":

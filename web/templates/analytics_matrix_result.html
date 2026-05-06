@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}5 базисов × 5 направлений — результат{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>5 базисов × 5 направлений</h1>
+  <p class="muted">
+    {{ res.title_product }} · доставка — оценка; Ж/Д рассчитано для <b>{{ res.volume_tons|int }} т</b>.
+  </p>
+  <p class="muted">
+    Формат: цена (СПбМТСБ) + доставка (оценка) = итог, все значения в ₽/т.
+  </p>
+  <p><a href="/analytics/matrix">← С начала</a> · <a href="/analytics/matrix/destinations">← Поменять направления</a></p>
+</div>
+
+<div class="card" style="margin-top:1rem;">
+  <div class="table-scroll">
+    <table class="table-matrix">
+      <thead>
+        <tr>
+          <th class="matrix-corner">Базис →<br/><span class="muted">Направление ↓</span></th>
+          {% for d in res.destinations %}
+            <th class="matrix-dest">
+              <div><b>{{ d.title }}</b></div>
+              {% if d.source == 'manual' %}
+                <div class="muted">вручную</div>
+              {% elif d.source == 'saved' %}
+                <div class="muted">сохранённое</div>
+              {% elif d.source %}
+                <div class="muted">{{ d.source }}</div>
+              {% endif %}
+              {% if logged_in and d.source == 'manual' and d.dest_id %}
+                <form method="post" action="/analytics/matrix/save-destination" style="margin-top:.35rem;">
+                  <input type="hidden" name="dest_id" value="{{ d.dest_id }}"/>
+                  <input type="hidden" name="next" value="/analytics/matrix/result"/>
+                  <input name="label" placeholder="Метка (необязательно)" />
+                  <button class="btn secondary" type="submit" style="margin-top:.35rem;">Сохранить</button>
+                </form>
+              {% endif %}
+            </th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in res.rows %}
+          <tr>
+            <td class="matrix-basis">
+              <div><b>{{ row.basis_name }}</b></div>
+              <div class="muted">{{ row.transport_label }}</div>
+            </td>
+            {% for cell in row.cells %}
+              <td class="matrix-cell">
+                {% if cell.error %}
+                  <div class="muted">{{ cell.error }}</div>
+                {% else %}
+                  <div class="matrix-total"><b>{{ '%.0f'|format(cell.total_per_ton) }}</b></div>
+                  <div class="muted">
+                    {{ '%.0f'|format(cell.price_per_ton) }} + {{ '%.0f'|format(cell.delivery_per_ton) }}
+                  </div>
+                  <div class="muted">{{ '%.0f'|format(cell.distance_km) }} км</div>
+                {% endif %}
+              </td>
+            {% endfor %}
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

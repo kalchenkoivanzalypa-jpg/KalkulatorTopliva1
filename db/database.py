@@ -1,14 +1,53 @@
 # -*- coding: utf-8 -*-
 
+import asyncio
+import logging
 import os
+import subprocess
+import sys
 from datetime import datetime
+from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import declarative_base
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, ForeignKey, BigInteger, Text, Index, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, ForeignKey, BigInteger, Text, Index, UniqueConstraint, text
 from sqlalchemy.sql import func
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
+
+
+def resolve_sqlite_database_path() -> str | None:
+    """Абсолютный путь к файлу SQLite из DATABASE_URL (только sqlite+aiosqlite)."""
+    url_s = (os.getenv("DATABASE_URL") or "").strip()
+    if not url_s or "sqlite" not in url_s.lower():
+        return None
+    try:
+        from sqlalchemy.engine.url import make_url
+
+        u = make_url(url_s)
+    except Exception:
+        return None
+    if not str(getattr(u, "drivername", "") or "").startswith("sqlite"):
+        return None
+    database = u.database
+    if not database:
+        return None
+    if os.path.isabs(database):
+        return database
+    return os.path.abspath(os.path.join(os.getcwd(), database))
+
+
+def _run_sqlite_migrations_subprocess(db_path: str) -> None:
+    root = Path(__file__).resolve().parent.parent
+    script = root / "scripts" / "migrate_sqlite_all.py"
+    subprocess.run(
+        [sys.executable, str(script), "--db", db_path],
+        cwd=str(root),
+        check=True,
+    )
+
 
 # Создание движка базы данных
 engine = create_async_engine(
@@ -32,6 +71,8 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     # Для веб-пользователей после входа по email может быть NULL; гостям — отрицательный synthetic id
     telegram_id = Column(BigInteger, unique=True, nullable=True, index=True)
+    # MAX messenger user id (для MAX-бота)
+    max_user_id = Column(BigInteger, unique=True, nullable=True, index=True)
     username = Column(String(255), nullable=True)
     first_name = Column(String(255), nullable=True)
     last_name = Column(String(255), nullable=True)
@@ -146,6 +187,26 @@ class CityDestination(Base):
         return f"<City {self.name}>"
 
 
+class UserDestination(Base):
+    """Сохранённые направления пользователя (ссылка на кэш city_destinations)."""
+    __tablename__ = "user_destinations"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    city_destination_id = Column(
+        Integer, ForeignKey("city_destinations.id"), nullable=False, index=True
+    )
+    label = Column(String(200), nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_used = Column(DateTime(timezone=True), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "city_destination_id", name="uq_user_destinations_user_city"),
+        Index("idx_user_destinations_active", "user_id", "is_active"),
+    )
+
+
 class UserRequest(Base):
     """История запросов пользователей"""
     __tablename__ = 'user_requests'
@@ -214,6 +275,8 @@ class PriceAlert(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
     product_id = Column(Integer, ForeignKey('products.id'), nullable=False)
+    # Если задано — уведомлять только по конкретному базису (иначе: минимум по рынку)
+    basis_id = Column(Integer, ForeignKey('basis.id'), nullable=True, index=True)
     
     target_price = Column(Float, nullable=False)
     volume = Column(Float, nullable=True)
@@ -229,6 +292,7 @@ class PriceAlert(Base):
     
     __table_args__ = (
         Index('idx_price_alerts_active', 'is_active', 'product_id'),
+        Index('idx_price_alerts_active_basis', 'is_active', 'basis_id'),
     )
 
 
@@ -253,9 +317,27 @@ class SpimexPrice(Base):
     exchange_product_id = Column(String(50), nullable=True)  # НОВОЕ ПОЛЕ для кода инструмента
     fuel = Column(String(100))
     basis = Column(String(100))
+    # Базовая цена для аналитики (исторически писали сюда "рыночную" или fallback)
     price = Column(Float)
+    # Бюллетень: объём договоров (тонн)
     volume = Column(Float, nullable=True)
-    date = Column(DateTime, default=datetime.now)
+    # Торговая дата бюллетеня (без времени)
+    date = Column(DateTime, default=datetime.now, index=True)
+
+    # --- Расширенные поля из бюллетеня (nullable, чтобы не ломать старую историю) ---
+    price_market = Column(Float, nullable=True)  # рыночная (если извлечена явно)
+    price_avg = Column(Float, nullable=True)  # средневзвешенная
+    price_min = Column(Float, nullable=True)  # минимальная
+    price_max = Column(Float, nullable=True)  # максимальная
+    best_ask = Column(Float, nullable=True)  # лучшее предложение
+    best_bid = Column(Float, nullable=True)  # лучший спрос
+    contracts = Column(Integer, nullable=True)  # количество договоров
+    volume_rub = Column(Float, nullable=True)  # объём в рублях (если извлекается)
+    source_pdf = Column(String(200), nullable=True)  # имя бюллетеня (для отладки)
+    
+    __table_args__ = (
+        Index("idx_spimex_code_date", "exchange_product_id", "date"),
+    )
     
     def __repr__(self):
         return f"<SpimexPrice {self.fuel} @ {self.basis}: {self.price} руб/т>"
@@ -274,6 +356,70 @@ class EmailOtp(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class BasisDigestSubscription(Base):
+    """
+    Ежедневная сводка по базису: цена на базисе по выбранному топливу или по всем доступным продуктам.
+    Рассылка — не чаще 1 раза в день (логика в price_checker), по расписанию МСК.
+    """
+
+    __tablename__ = "basis_digest_subscriptions"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    basis_id = Column(Integer, ForeignKey("basis.id"), nullable=False, index=True)
+    # prices_only | with_delivery
+    delivery_mode = Column(String(32), nullable=False, default="prices_only")
+    destination_id = Column(Integer, ForeignKey("city_destinations.id"), nullable=True, index=True)
+    destination_name = Column(String(255), nullable=True)
+    destination_key = Column(String(255), nullable=True)
+    # True = все активные продукты на базисе; иначе один product_id (обязателен)
+    all_products = Column(Boolean, nullable=False, default=False)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=True, index=True)
+
+    is_active = Column(Boolean, default=True)
+    last_sent_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index(
+            "uq_basis_digest_prices_only_all",
+            "user_id",
+            "basis_id",
+            unique=True,
+            sqlite_where=text("all_products = 1 AND delivery_mode = 'prices_only' AND destination_id IS NULL"),
+        ),
+        Index(
+            "uq_basis_digest_prices_only_product",
+            "user_id",
+            "basis_id",
+            "product_id",
+            unique=True,
+            sqlite_where=text(
+                "all_products = 0 AND product_id IS NOT NULL AND delivery_mode = 'prices_only' AND destination_id IS NULL"
+            ),
+        ),
+        Index(
+            "uq_basis_digest_delivery_all",
+            "user_id",
+            "basis_id",
+            "destination_id",
+            unique=True,
+            sqlite_where=text("all_products = 1 AND delivery_mode = 'with_delivery' AND destination_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_basis_digest_delivery_product",
+            "user_id",
+            "basis_id",
+            "product_id",
+            "destination_id",
+            unique=True,
+            sqlite_where=text(
+                "all_products = 0 AND product_id IS NOT NULL AND delivery_mode = 'with_delivery' AND destination_id IS NOT NULL"
+            ),
+        ),
+    )
+
+
 class AnomalyAlert(Base):
     """Подписка на аномальные изменения цены (day-to-day) по instrument_code."""
     __tablename__ = "anomaly_alerts"
@@ -286,6 +432,9 @@ class AnomalyAlert(Base):
 
     # Порог в процентах (например 3.0 = 3%)
     threshold_pct = Column(Float, nullable=False, default=3.0)
+
+    # Направление: any | up | down
+    direction = Column(String(16), nullable=False, default="any")
 
     is_active = Column(Boolean, default=True)
 
@@ -300,11 +449,54 @@ class AnomalyAlert(Base):
     )
 
 
+class TableDigestSubscription(Base):
+    """
+    Ежедневная пользовательская таблица: топлива × базисы × направления (доставка).
+    Выбор и лимиты — в веб-кабинете; рассылка в MAX/email как у сводки (по умолчанию 14:15 МСК).
+    """
+
+    __tablename__ = "table_digest_subscriptions"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+    # JSON-массивы целых id (products.id, basis.id, city_destinations.id)
+    product_ids_json = Column(Text, nullable=False)
+    basis_ids_json = Column(Text, nullable=False)
+    destination_ids_json = Column(Text, nullable=False)
+
+    send_hour_msk = Column(Integer, nullable=False, default=14)
+    send_minute_msk = Column(Integer, nullable=False, default=15)
+
+    notify_email = Column(Boolean, nullable=False, default=True)
+    notify_max = Column(Boolean, nullable=False, default=True)
+
+    is_active = Column(Boolean, default=True)
+    last_sent_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (Index("idx_table_digest_user_active", "user_id", "is_active"),)
+
+
 async def init_db():
     """Инициализация базы данных (создание таблиц)"""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     print("✅ База данных инициализирована")
+
+    db_path = resolve_sqlite_database_path()
+    if db_path and Path(db_path).is_file():
+        try:
+            await asyncio.to_thread(_run_sqlite_migrations_subprocess, db_path)
+            logger.info("SQLite additive migrations OK: %s", db_path)
+        except Exception as e:
+            logger.exception(
+                "SQLite migrate_sqlite_all failed (проверьте схему вручную: scripts/migrate_sqlite_all.py --db %s): %s",
+                db_path,
+                e,
+            )
+    elif db_path:
+        logger.warning("SQLite migrate skipped: файл БД не найден: %s", db_path)
 
 
 async def get_session() -> AsyncSession:

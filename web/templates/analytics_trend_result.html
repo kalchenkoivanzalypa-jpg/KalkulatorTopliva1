@@ -2,25 +2,79 @@
 {% block title %}Тренд{% endblock %}
 {% block content %}
 <div class="card">
-  <h1>Тренд за 10 торговых дней</h1>
+  <h1>Тренд</h1>
   <p><b>{{ tr.product_name }}</b> · {{ tr.basis_name }}</p>
   <p class="muted">Код: <code>{{ tr.instrument_code }}</code></p>
+  {% if tr.basis_quality_text %}
+  <p class="muted">{{ tr.basis_quality_text }}</p>
+  {% endif %}
   <h2>Последние дни</h2>
   <ul>
     {% for line in tr.lines %}
     <li>{{ line }}</li>
     {% endfor %}
   </ul>
-  <p>Минимум: {{ tr.pmin }} · Максимум: {{ tr.pmax }} · Прогноз: {{ tr.pforecast }}</p>
+  <p>Минимум (30д): {{ tr.pmin }} · Максимум (30д): {{ tr.pmax }} · Прогноз (30д): {{ tr.pforecast }}</p>
   <p class="muted">{{ tr.forecast_parts | join('; ') }}</p>
+  {% if tr.metrics30_text %}
+  <h2>Аналитика за 30 торговых дней</h2>
+  <ul class="muted">
+    {% for line in tr.metrics30_text %}
+    <li>{{ line }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
   <details>
-    <summary>Подробнее по 10 дням</summary>
-    <ul>
-      {% for line in tr.details_lines %}
-      <li>{{ line }}</li>
-      {% endfor %}
-    </ul>
+    <summary>Подробнее по дням</summary>
+    <details style="margin-top:0.5rem;">
+      <summary>5 дней</summary>
+      <ul>
+        {% for line in tr.details_lines_5 %}
+        <li>{{ line }}</li>
+        {% endfor %}
+      </ul>
+    </details>
+    <details style="margin-top:0.5rem;">
+      <summary>10 дней</summary>
+      <ul>
+        {% for line in tr.details_lines_10 %}
+        <li>{{ line }}</li>
+        {% endfor %}
+      </ul>
+    </details>
+    <details style="margin-top:0.5rem;">
+      <summary>30 дней</summary>
+      <ul>
+        {% for line in tr.details_lines_30 %}
+        <li>{{ line }}</li>
+        {% endfor %}
+      </ul>
+    </details>
   </details>
+
+  {% if logged_in %}
+  <div style="margin-top:1rem;padding-top:0.75rem;border-top:1px solid var(--border);">
+    <h2 style="margin-top:0;">Подписки</h2>
+    <p class="muted">Снижение цены — для этого базиса. Аномалия — резкое изменение цены по биржевому коду.</p>
+    <div class="sub-actions">
+      <form method="post" action="/cabinet/subscribe">
+        <input type="hidden" name="next" value="{{ request.url }}"/>
+        <input type="hidden" name="product_id" value="{{ product_id }}"/>
+        <input type="hidden" name="basis_id" value="{{ basis_id }}"/>
+        <input class="mini-input" name="target_price" value="{{ tr.pforecast|replace(' ₽/т','')|replace(' ','') }}" inputmode="decimal"/>
+        <button class="btn secondary" type="submit">Цена ↓</button>
+      </form>
+      <form method="post" action="/cabinet/subscribe_anomaly">
+        <input type="hidden" name="next" value="{{ request.url }}"/>
+        <input type="hidden" name="instrument_code" value="{{ tr.instrument_code }}"/>
+        <input class="tiny-input" name="threshold_pct" value="3" inputmode="decimal"/>
+        <button class="btn secondary" type="submit">Аномалия</button>
+      </form>
+    </div>
+  </div>
+  {% else %}
+  <p class="muted"><a href="/login?next=/cabinet">Войдите по email</a>, чтобы оформить подписки.</p>
+  {% endif %}
   <h2>Заявка с доставкой до точки</h2>
   <form method="post" action="/analytics/order">
     <input type="hidden" name="basis_id" value="{{ basis_id }}"/>
@@ -30,7 +84,7 @@
     <label for="volume">Объём, тонн</label>
     <input type="text" name="volume" id="volume" inputmode="decimal" placeholder="60" required/>
     <div class="actions"><button class="btn" type="submit">Оставить заявку на КП</button></div>
-    <p class="muted">Нужен вход по email. Заявка уйдёт на email и менеджерам (если настроено).</p>
+    <p class="muted">Нужен вход по email. После отправки заявка придёт на ваш email; точное коммерческое предложение — в течение рабочего дня.</p>
   </form>
   <p><a href="/analytics/trend">← Новый тренд</a></p>
 </div>

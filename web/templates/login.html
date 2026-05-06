@@ -3,7 +3,7 @@
 {% block content %}
 <div class="card">
   <h1>Вход по email</h1>
-  <p class="muted">Отправим одноразовый код. Продолжая, вы соглашаетесь на обработку email для входа и уведомлений.</p>
+  <p class="muted">Отправим одноразовый код. Продолжая, вы соглашаетесь на обработку email для входа и уведомлений, а также на получение коммерческих предложений и рассылок от ООО «НК-Востокнефтепродукт».</p>
   {% if error %}<p class="error">{{ error }}</p>{% endif %}
   <form method="post" action="/login">
     <label for="email">Email</label>

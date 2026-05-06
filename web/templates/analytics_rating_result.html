@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Рейтинг{% endblock %}
+{% block content %}
+<div class="card card-rating">
+  <h1>Рейтинг базисов</h1>
+  <p><b>{{ product_name }}</b> · назначение: {{ destination }}</p>
+  <p class="muted">
+    «Сигнал» и «Оценка» — быстрый ориентир по <b>цене с доставкой до точки</b> (как в калькуляторе) и по торгам за 30 дней: ликвидность, позиция в диапазоне, риски.
+    Наведите на сумму в столбце цены — увидите разбивку «на базисе / доставка».
+  </p>
+  {% if items %}
+  <div class="table-scroll table-rating-shell">
+    <table class="table-rating">
+      <thead>
+        <tr>
+          <th class="col-basis">Базис</th>
+          <th class="col-narrow">Транспорт</th>
+          <th class="col-signal">Сигнал</th>
+          <th class="col-num col-total" title="Цена на базисе + доставка до назначения, ₽/т">Цена с доставкой,<br/><span class="th-unit">₽/т</span></th>
+          <th class="col-num" title="Итоговый балл 0–100">Оценка</th>
+          <th class="col-num" title="Внутренний скоринг по 30 дням">Вход</th>
+          <th class="col-num" title="Позиция цены в диапазоне 30 дней, 0…1">Поз.30д</th>
+          <th class="col-num" title="Отклонение от среднего за 30 дней, сигмы">Z30</th>
+          <th class="col-num" title="Ликвидность 0–100">Ликв.</th>
+          <th class="col-sub">Подписки</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for it in items %}
+        <tr>
+          <td class="td-basis">{{ it.basis_name }}</td>
+          <td>{{ it.transport }}</td>
+          <td><span class="signal-pill">{{ it.signal }}</span></td>
+          <td class="num col-total" title="{{ it.price_hint }}">
+            <strong>{{ it.total_per_ton }}</strong>
+          </td>
+          <td class="num">{{ it.final_score }}</td>
+          <td class="num">{{ it.entry_score }}</td>
+          <td class="num">{{ it.range_pos30 }}</td>
+          <td class="num">{{ it.z30 }}</td>
+          <td class="num">{{ it.liq }}</td>
+          <td class="td-sub">
+            {% if logged_in %}
+              <details class="sub-details">
+                <summary>Подписаться</summary>
+                <div class="sub-actions">
+                  <form method="post" action="/cabinet/subscribe">
+                    <input type="hidden" name="next" value="{{ request.url }}"/>
+                    <input type="hidden" name="product_id" value="{{ it.product_id }}"/>
+                    <input type="hidden" name="basis_id" value="{{ it.basis_id }}"/>
+                    <input class="mini-input" name="target_price" value="{{ it.total_per_ton|replace(' ', '') }}" inputmode="decimal"/>
+                    <button class="btn secondary" type="submit">Цена ↓</button>
+                  </form>
+                  <form method="post" action="/cabinet/subscribe_anomaly">
+                    <input type="hidden" name="next" value="{{ request.url }}"/>
+                    <input type="hidden" name="instrument_code" value="{{ it.instrument_code }}"/>
+                    <input class="tiny-input" name="threshold_pct" value="3" inputmode="decimal"/>
+                    <button class="btn secondary" type="submit">Аномалия</button>
+                  </form>
+                </div>
+              </details>
+            {% else %}
+              <a href="/login?next=/cabinet">Войти</a>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <details class="rating-details">
+    <summary>Что означают столбцы</summary>
+    <div class="muted">
+      <p><b>Цена с доставкой</b> — сумма: рыночная цена на базисе + ориентировочная доставка до вашего назначения, ₽/т. По этому значению строятся сигнал и оценка. Подсказка с разбивкой — при наведении на сумму.</p>
+      <p><b>Оценка</b> — балл 0–100: в основном выгодность «цена с доставкой», плюс ликвидность и динамика за 30 дней.</p>
+      <p><b>Вход</b> — насколько текущая рыночная цена интересна относительно 30‑дневного диапазона.</p>
+      <p><b>Поз.30д</b> — где цена внутри диапазона 30 дней: 0 у минимума, 1 у максимума.</p>
+      <p><b>Z30</b> — насколько сегодняшняя цена «не такая как обычно» за последние 30 торговых дней. Примерно: 0 — близко к среднему, 1 — заметно выше/ниже среднего, 2+ — сильное отклонение (редкая ситуация).</p>
+      <p><b>Ликв.</b> — ликвидность инструмента, 0–100: учитываются только дни, где в бюллетене есть сделка по этому коду (т.е. фактические <b>торговые дни</b>), а также объём и число договоров. Выходные сами по себе не добавляют «минус» — просто в них нет точек в истории.</p>
+    </div>
+  </details>
+  <details class="rating-details">
+    <summary>Как формируется сигнал</summary>
+    <div class="muted">
+      <p><b>Покупать</b> — выгодная цена с доставкой + нормальные торги (ликвидность) + без сильных «аномалий».</p>
+      <p><b>Наблюдать</b> — вариант нормальный, но есть факторы риска/неидеальная позиция в диапазоне.</p>
+      <p><b>Избегать</b> — дорого относительно альтернатив или низкая ликвидность/повышенный риск.</p>
+      <p class="muted">Примечание: это аналитическая подсказка, не гарантия.</p>
+    </div>
+  </details>
+  {% else %}
+  <p class="bad">
+    Нет строк рейтинга: для выбранного топлива и назначения не найдено ни одного базиса с ценой так же,
+    как в калькуляторе (или назначение не распознано). Частая причина — выбран «другой» продукт с тем же названием марки
+    в БД: используйте тот же список топлива, что в разделе «Расчёт». Также нужны активные цены на базисах и
+    (для метрик) история СПбМТСБ по коду инструмента.
+  </p>
+  {% endif %}
+
+  <p><a href="/analytics/rating">← Новый рейтинг</a></p>
+</div>
+{% endblock %}

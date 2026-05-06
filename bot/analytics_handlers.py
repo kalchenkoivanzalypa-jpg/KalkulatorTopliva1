@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import difflib
+import asyncio
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
@@ -16,7 +17,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from bot.keyboards import get_after_calculation_keyboard, get_cancel_keyboard, get_main_keyboard
-from bot.handlers import SubscriptionStates, get_or_create_user
+from bot.handlers import SubscriptionStates, find_nearest_basises, get_or_create_user
 from db.database import (
     Basis,
     CityDestination,
@@ -26,7 +27,7 @@ from db.database import (
     UserRequest,
     get_session,
 )
-from rail_tariff import compute_rail_tariff_distance_km
+from rail_tariff import compute_rail_tariff_distance_km_cached
 from utils import (
     canonical_fuel_display_name,
     get_coordinates_from_city,
@@ -34,12 +35,14 @@ from utils import (
     normalize_city_name_key,
 )
 from utils.rail_logistics import (
-    find_rail_station_for_destination,
     is_sakhalin_geo_point,
     is_sakhalin_destination,
+    resolved_rail_dest_station_for_destination,
     sakhalin_ferry_surcharge_per_ton,
 )
+from analytics.metrics import compute_final_score_and_signal, compute_metrics_30d, load_series_30d
 from bot.handlers import calculate_distance
+from utils.market_price_freshness import pick_best_product_basis_price_row
 
 analytics_router = Router()
 logger = logging.getLogger(__name__)
@@ -128,6 +131,7 @@ class AnalyticsStates(StatesGroup):
     waiting_for_trend_basis_search = State()
     waiting_for_compare_basis_search = State()
     waiting_for_compare_destination = State()
+    waiting_for_rating_destination = State()
     waiting_for_order_destination = State()
     waiting_for_order_volume = State()
     waiting_for_delivery_destination = State()
@@ -138,6 +142,7 @@ def _analytics_menu_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.add(InlineKeyboardButton(text="📈 Тренд на базисе", callback_data="a_trend"))
     b.add(InlineKeyboardButton(text="📊 Сравнить 3 базиса", callback_data="a_compare"))
+    b.add(InlineKeyboardButton(text="🔥 Сигналы / рейтинг", callback_data="a_rating"))
     b.add(InlineKeyboardButton(text="⬅️ Назад", callback_data="a_back"))
     b.adjust(1)
     return b.as_markup()
@@ -354,7 +359,9 @@ async def _create_user_request_for_basis(
     dest_station_lon: float | None = None
     dest_station_esr: str | None = None
     if not coords:
-        dest_station = await find_rail_station_for_destination(session, destination_text, dest_key)
+        dest_station = await resolved_rail_dest_station_for_destination(
+            session, destination_text, dest_key
+        )
         if dest_station is None:
             raise RuntimeError("Не удалось определить назначение (нет координат и станции)")
         dest_station_lat = float(dest_station.latitude)
@@ -367,7 +374,9 @@ async def _create_user_request_for_basis(
         dest_lat, dest_lon = dest_station_lat, dest_station_lon
     else:
         dest_lat, dest_lon = coords
-        dest_station = await find_rail_station_for_destination(session, destination_text, dest_key)
+        dest_station = await resolved_rail_dest_station_for_destination(
+            session, destination_text, dest_key
+        )
         if dest_station is not None:
             dest_station_lat = float(dest_station.latitude)
             dest_station_lon = float(dest_station.longitude)
@@ -405,13 +414,14 @@ async def _create_user_request_for_basis(
         else:
             d_lat = dest_lat
             d_lon = dest_lon
-        distance_km = compute_rail_tariff_distance_km(
+        distance_km = await asyncio.to_thread(
+            compute_rail_tariff_distance_km_cached,
             o_lat,
             o_lon,
             d_lat,
             d_lon,
-            origin_esr=(str(basis_esr).strip() if basis_esr else None),
-            dest_esr=dest_station_esr,
+            (str(basis_esr).strip() if basis_esr else None),
+            dest_station_esr,
         )
         transport_type = "rail"
     else:
@@ -593,27 +603,24 @@ async def analytics_trend_show(cb: CallbackQuery, state: FSMContext):
 
     session = await get_session()
     try:
-        pbp = (
-            await session.execute(
-                select(ProductBasisPrice)
-                .where(
-                    ProductBasisPrice.product_id == pid,
-                    ProductBasisPrice.basis_id == basis_id,
-                    ProductBasisPrice.is_active.is_(True),
-                )
-                .limit(1)
-            )
-        ).scalar_one_or_none()
-        basis = await session.get(Basis, basis_id)
         product = await session.get(Product, pid)
+        exclude_ai100_stub = canonical_fuel_display_name(getattr(product, "name", "") or "") == "АИ-100-К5"
+        pbp = await pick_best_product_basis_price_row(
+            session,
+            basis_id=int(basis_id),
+            product_ids=[int(pid)],
+            exclude_ai100_price_stub=exclude_ai100_stub,
+        )
+        basis = await session.get(Basis, basis_id)
         if not pbp or not pbp.instrument_code:
             await cb.message.answer("❌ Не найден instrument_code для этого базиса/товара.")
             await cb.answer()
             return
 
+        code_u = str(pbp.instrument_code or "").strip().upper()
         qh = await session.execute(
             select(SpimexPrice)
-            .where(SpimexPrice.exchange_product_id == pbp.instrument_code)
+            .where(func.upper(SpimexPrice.exchange_product_id) == code_u)
             .order_by(SpimexPrice.date.desc())
             .limit(10)
         )
@@ -788,7 +795,9 @@ async def analytics_trend_delivery_volume(message: Message, state: FSMContext):
         coords = await get_coordinates_from_city(dest_text, session)
         dest_station = None
         if not coords:
-            dest_station = await find_rail_station_for_destination(session, dest_text, dest_key)
+            dest_station = await resolved_rail_dest_station_for_destination(
+                session, dest_text, dest_key
+            )
             if dest_station is None:
                 await message.answer("❌ Не нашёл координаты/станцию назначения.", reply_markup=get_main_keyboard())
                 await state.clear()
@@ -796,7 +805,9 @@ async def analytics_trend_delivery_volume(message: Message, state: FSMContext):
             dest_lat, dest_lon = float(dest_station.latitude), float(dest_station.longitude)
         else:
             dest_lat, dest_lon = coords
-            dest_station = await find_rail_station_for_destination(session, dest_text, dest_key)
+            dest_station = await resolved_rail_dest_station_for_destination(
+                session, dest_text, dest_key
+            )
         sakhalin_dest = is_sakhalin_destination(dest_text, dest_key, dest_station)
 
         # Дистанция + доставка за тонну
@@ -815,13 +826,14 @@ async def analytics_trend_delivery_volume(message: Message, state: FSMContext):
             else:
                 d_lat = dest_lat
                 d_lon = dest_lon
-            dist = compute_rail_tariff_distance_km(
+            dist = await asyncio.to_thread(
+                compute_rail_tariff_distance_km_cached,
                 o_lat,
                 o_lon,
                 d_lat,
                 d_lon,
-                origin_esr=(str(basis.rail_esr).strip() if getattr(basis, "rail_esr", None) else None),
-                dest_esr=(
+                (str(basis.rail_esr).strip() if getattr(basis, "rail_esr", None) else None),
+                (
                     str(dest_station.esr_code).strip()
                     if dest_station and getattr(dest_station, "esr_code", None)
                     else None
@@ -845,9 +857,10 @@ async def analytics_trend_delivery_volume(message: Message, state: FSMContext):
             delivery_per_ton += sakhalin_ferry_surcharge_per_ton(sakhalin_dest)
 
         # 10 дней истории (рыночная)
+        code_u = str(pbp.instrument_code or "").strip().upper()
         qh = await session.execute(
             select(SpimexPrice)
-            .where(SpimexPrice.exchange_product_id == pbp.instrument_code)
+            .where(func.upper(SpimexPrice.exchange_product_id) == code_u)
             .order_by(SpimexPrice.date.desc())
             .limit(10)
         )
@@ -960,6 +973,157 @@ async def analytics_anomaly_subscribe(cb: CallbackQuery):
 # =========================
 # Compare 3 bases (5 days)
 # =========================
+
+
+# =========================
+# Rating / signals (MVP)
+# =========================
+
+
+@analytics_router.callback_query(F.data == "a_rating")
+async def analytics_rating_start(cb: CallbackQuery, state: FSMContext):
+    await state.clear()
+    session = await get_session()
+    try:
+        q = await session.execute(select(Product).where(Product.is_active.is_(True)).order_by(Product.name))
+        products = _pick_compare_products(q.scalars().all())
+    finally:
+        await session.close()
+    await cb.message.answer(
+        "🔥 <b>Сигналы / рейтинг</b>\n\nВыберите топливо:",
+        reply_markup=_products_inline_kb(products, prefix="a_rate_prod_"),
+        parse_mode="HTML",
+    )
+    await cb.answer()
+
+
+@analytics_router.callback_query(F.data.startswith("a_rate_prod_"))
+async def analytics_rating_pick_destination(cb: CallbackQuery, state: FSMContext):
+    pid = int(cb.data.split("_")[-1])
+    await state.update_data(rating_product_id=pid)
+    await cb.message.answer(
+        "Введите назначение (НП или ж/д станция), например: Иркутск",
+        reply_markup=get_cancel_keyboard(),
+    )
+    await state.set_state(AnalyticsStates.waiting_for_rating_destination)
+    await cb.answer()
+
+
+@analytics_router.message(AnalyticsStates.waiting_for_rating_destination, F.text)
+async def analytics_rating_show(message: Message, state: FSMContext):
+    t = (message.text or "").strip()
+    if "отмена" in t.lower():
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=get_main_keyboard())
+        return
+
+    data = await state.get_data()
+    pid = data.get("rating_product_id")
+    if not pid:
+        await state.clear()
+        await message.answer("❌ Не выбрано топливо. Начните заново.", reply_markup=get_main_keyboard())
+        return
+
+    session = await get_session()
+    try:
+        coords = await get_coordinates_from_city(t, session)
+        if coords:
+            dest_lat, dest_lon = coords
+        else:
+            dest_key = normalize_city_name_key(t)
+            rs = await resolved_rail_dest_station_for_destination(session, t, dest_key)
+            if rs is None:
+                await state.clear()
+                await message.answer("❌ Не нашёл координаты/станцию назначения.", reply_markup=get_main_keyboard())
+                return
+            dest_lat, dest_lon = float(rs.latitude), float(rs.longitude)
+
+        dest_key = normalize_city_name_key(t)
+        nearest = await find_nearest_basises(
+            session,
+            float(dest_lat),
+            float(dest_lon),
+            int(pid),
+            limit=8,
+            destination_name_key=dest_key,
+            destination_raw=t,
+        )
+        if not nearest:
+            await state.clear()
+            await message.answer("❌ Нет базисов/цен для рейтинга.", reply_markup=get_main_keyboard())
+            return
+
+        product = await session.get(Product, int(pid))
+        product_name = canonical_fuel_display_name(product.name) if product else "—"
+
+        totals: list[float] = []
+        entries: list[float] = []
+        vols: list[float] = []
+        computed = []
+        for it in nearest:
+            price = it["price"]
+            basis = it["basis"]
+            code = getattr(price, "instrument_code", None)
+            m30 = None
+            if code:
+                series30 = await load_series_30d(session, str(code))
+                m30 = compute_metrics_30d(series30) if series30 else None
+            total = float(it["total_cost_per_ton"])
+            totals.append(total)
+            if m30 is not None:
+                entries.append(float(m30.entry_score))
+                vols.append(float(m30.volatility30))
+            computed.append((it, basis, m30, total))
+
+        t_min = min(totals) if totals else 0.0
+        t_max = max(totals) if totals else 0.0
+        e_min = min(entries) if entries else 0.0
+        e_max = max(entries) if entries else 0.0
+        v_min = min(vols) if vols else 0.0
+        v_max = max(vols) if vols else 0.0
+
+        rows = []
+        for it, basis, m30, total in computed:
+            final, sig = compute_final_score_and_signal(
+                total_cost_per_ton=float(total),
+                metrics=m30,
+                peer_total_min=float(t_min),
+                peer_total_max=float(t_max),
+                peer_entry_min=float(e_min),
+                peer_entry_max=float(e_max),
+                peer_vol_min=float(v_min),
+                peer_vol_max=float(v_max),
+            )
+            rows.append(
+                (
+                    float(final),
+                    sig,
+                    basis.name,
+                    "Ж/Д" if (it["transport_type"] == "rail") else "Авто",
+                    float(total),
+                    (f"{m30.range_pos30:.2f}" if (m30 and m30.range_pos30 is not None) else "—"),
+                    (f"{m30.z30:+.2f}" if (m30 and m30.z30 is not None) else "—"),
+                    (f"{m30.liquidity_score:.0f}/100" if m30 else "—"),
+                )
+            )
+
+        rows.sort(key=lambda x: x[0], reverse=True)
+        lines = []
+        for final, sig, bname, tt, total_per_ton, rpos, z, liq in rows[:5]:
+            lines.append(
+                f"• <b>{bname}</b> ({tt}) — {total_per_ton:,.0f} ₽/т | <b>{sig}</b> | Final {final:.1f} | RangePos30 {rpos} | Z30 {z} | Liq {liq}".replace(
+                    ",", " "
+                )
+            )
+
+        await message.answer(
+            f"🔥 <b>Рейтинг</b>\n{product_name} · {t}\n\n" + "\n".join(lines),
+            parse_mode="HTML",
+            reply_markup=get_main_keyboard(),
+        )
+        await state.clear()
+    finally:
+        await session.close()
 
 
 @analytics_router.callback_query(F.data == "a_compare")
@@ -1098,14 +1262,14 @@ async def analytics_compare_show(message: Message, state: FSMContext):
         coords = await get_coordinates_from_city(t, session)
         dest_station = None
         if not coords:
-            dest_station = await find_rail_station_for_destination(session, t, dest_key)
+            dest_station = await resolved_rail_dest_station_for_destination(session, t, dest_key)
             if dest_station is None:
                 await message.answer("❌ Не нашёл координаты/станцию назначения.")
                 return
             dest_lat, dest_lon = float(dest_station.latitude), float(dest_station.longitude)
         else:
             dest_lat, dest_lon = coords
-            dest_station = await find_rail_station_for_destination(session, t, dest_key)
+            dest_station = await resolved_rail_dest_station_for_destination(session, t, dest_key)
         sakhalin_dest = is_sakhalin_destination(t, dest_key, dest_station)
 
         product = await session.get(Product, int(pid))
@@ -1143,16 +1307,13 @@ async def analytics_compare_show(message: Message, state: FSMContext):
             if b and sakhalin_dest and (b.transport_type or "").lower() == "auto":
                 lines.append(f"⛔ {b.name}: для Сахалина только Ж/Д доставка")
                 continue
-            pbp = (
-                await session.execute(
-                    select(ProductBasisPrice)
-                    .where(ProductBasisPrice.product_id.in_(alias_ids))
-                    .where(ProductBasisPrice.basis_id == int(bid))
-                    .where(ProductBasisPrice.is_active.is_(True))
-                    .order_by(ProductBasisPrice.id.asc())
-                    .limit(1)
-                )
-            ).scalar_one_or_none()
+            exclude_ai100_stub = canonical_fuel_display_name(getattr(product, "name", "") or "") == "АИ-100-К5"
+            pbp = await pick_best_product_basis_price_row(
+                session,
+                basis_id=int(bid),
+                product_ids=alias_ids,
+                exclude_ai100_price_stub=exclude_ai100_stub,
+            )
             if not pbp or not b:
                 lines.append(f"❌ {b.name if b else _bname}: нет цены/кода")
                 continue
@@ -1172,13 +1333,14 @@ async def analytics_compare_show(message: Message, state: FSMContext):
                 else:
                     d_lat = dest_lat
                     d_lon = dest_lon
-                dist = compute_rail_tariff_distance_km(
+                dist = await asyncio.to_thread(
+                    compute_rail_tariff_distance_km_cached,
                     o_lat,
                     o_lon,
                     d_lat,
                     d_lon,
-                    origin_esr=(str(b.rail_esr).strip() if getattr(b, "rail_esr", None) else None),
-                    dest_esr=(
+                    (str(b.rail_esr).strip() if getattr(b, "rail_esr", None) else None),
+                    (
                         str(dest_station.esr_code).strip()
                         if dest_station and getattr(dest_station, "esr_code", None)
                         else None
@@ -1193,9 +1355,10 @@ async def analytics_compare_show(message: Message, state: FSMContext):
                 delivery += sakhalin_ferry_surcharge_per_ton(sakhalin_dest)
             total = float(pbp.current_price) + delivery
 
+            code_u = str(pbp.instrument_code or "").strip().upper()
             qh = await session.execute(
                 select(SpimexPrice)
-                .where(SpimexPrice.exchange_product_id == pbp.instrument_code)
+                .where(func.upper(SpimexPrice.exchange_product_id) == code_u)
                 .order_by(SpimexPrice.date.desc())
                 .limit(5)
             )

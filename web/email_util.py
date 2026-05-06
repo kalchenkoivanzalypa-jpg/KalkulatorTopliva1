@@ -159,6 +159,7 @@ async def send_smtp_email(
     body: str,
     to_addrs: list[str],
     require_smtp: bool = False,
+    html: str | None = None,
 ) -> None:
     """
     Асинхронная обёртка над SMTP.
@@ -188,6 +189,8 @@ async def send_smtp_email(
     msg["From"] = smtp_from
     msg["To"] = ", ".join(to_addrs)
     msg.set_content(body, charset="utf-8")
+    if html and str(html).strip():
+        msg.add_alternative(str(html), subtype="html")
 
     try:
         await asyncio.to_thread(_send_sync, msg)

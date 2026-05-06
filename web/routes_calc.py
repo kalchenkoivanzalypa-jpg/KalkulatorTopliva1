@@ -12,6 +12,7 @@ from web.deps import DbSession, init_guest_session, optional_session_user, requi
 from web.products_util import list_products_for_calc
 from web.jinja_env import templates
 from web.services.calc_service import (
+    build_calc_result_from_user_request,
     finalize_calculation,
     rebuild_selected,
     resolve_destination_to_id,
@@ -64,7 +65,9 @@ async def calc_destination(
     if not product_id:
         return RedirectResponse("/calc", status_code=302)
 
-    dest_id, dest_lat, dest_lon, dest_key = await resolve_destination_to_id(session, destination.strip())
+    dest_id, dest_lat, dest_lon, dest_key, dest_is_station = await resolve_destination_to_id(
+        session, destination.strip()
+    )
     if dest_id is None:
         p = await session.get(Product, int(product_id))
         return templates.TemplateResponse(
@@ -87,7 +90,22 @@ async def calc_destination(
         max_distance_auto=MAX_AUTO_DISTANCE_KM,
         destination_name_key=dest_key,
         destination_raw=destination.strip(),
+        rail_only=bool(dest_is_station),
     )
+    if not nearby and dest_is_station:
+        # Фоллбек: если по станции не нашлось Ж/Д — пробуем общий режим
+        nearby = await find_nearest_basises(
+            session,
+            dest_lat,
+            dest_lon,
+            int(product_id),
+            limit=10,
+            max_distance_rail=MAX_RAIL_DISTANCE_KM,
+            max_distance_auto=MAX_AUTO_DISTANCE_KM,
+            destination_name_key=dest_key,
+            destination_raw=destination.strip(),
+            rail_only=False,
+        )
     if not nearby:
         p = await session.get(Product, int(product_id))
         return templates.TemplateResponse(
@@ -228,12 +246,30 @@ async def calc_result(
         )
 
     request.session.pop("calc", None)
+    request.session["last_calc_request_id"] = int(result.request_id)
+    return RedirectResponse("/calc/result", status_code=302)
 
+
+@router.get("/calc/result", response_class=HTMLResponse)
+async def calc_result_get(request: Request, session: DbSession):
+    init_guest_session(request)
+    rid = request.session.get("last_calc_request_id")
+    if not rid:
+        return RedirectResponse("/calc", status_code=302)
+    from db.database import UserRequest
+
+    ur = await session.get(UserRequest, int(rid))
+    if not ur:
+        return RedirectResponse("/calc", status_code=302)
+
+    guest_user = await require_guest_user(request, session)
+    session_user = await optional_session_user(request, session)
+    user = session_user if (session_user and session_user.email) else guest_user
+    if int(getattr(ur, "user_id", 0) or 0) != int(getattr(user, "id", 0) or 0):
+        return RedirectResponse("/calc", status_code=302)
+
+    r = await build_calc_result_from_user_request(session, ur)
     return templates.TemplateResponse(
         "calc_result.html",
-        {
-            "request": request,
-            "r": result,
-            "logged_in": bool(session_user and session_user.email),
-        },
+        {"request": request, "r": r, "logged_in": bool(session_user and session_user.email)},
     )

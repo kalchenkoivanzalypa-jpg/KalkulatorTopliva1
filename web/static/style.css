@@ -1,13 +1,13 @@
 :root {
-  /* Палитра ближе к «сайтовому» B2B-виду: можно подкрутить под Тильду через те же переменные */
-  --bg: #0c1118;
-  --bg-mid: #121a24;
-  --card: #161f2e;
+  /* Палитра в духе основного сайта nk-vsnp.ru: тёмный фон, спокойный синий акцент, тёплый акцент для бренда */
+  --bg: #0a0f16;
+  --bg-mid: #101820;
+  --card: #141c2a;
   --text: #e8eef6;
   --muted: #8a9bb0;
-  --accent: #3d7dd9;
-  --accent-hover: #5b93e8;
-  --accent-warm: #c9a43a;
+  --accent: #2d6fd4;
+  --accent-hover: #4d8aeb;
+  --accent-warm: #d4a84a;
   --accent2: #3d9e6a;
   --danger: #e85d5d;
   --border: #2a3548;
@@ -171,7 +171,7 @@ h2 {
   cursor: pointer;
   font-size: 0.95rem;
   font-weight: 600;
-  background: linear-gradient(180deg, var(--accent) 0%, #2f68c4 100%);
+  background: linear-gradient(180deg, var(--accent) 0%, #235cad 100%);
   color: #fff;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
 }
@@ -200,6 +200,64 @@ h2 {
   }
 }
 
+@media (min-width: 900px) {
+  .grid.subscription-grid.cols-3 {
+    grid-template-columns: repeat(3, 1fr);
+    align-items: start;
+  }
+}
+
+.subscription-block h2 {
+  font-size: 1.05rem;
+  margin: 0 0 0.5rem;
+}
+
+.subscription-block .sub-block-heading {
+  font-size: 0.95rem;
+  margin: 1rem 0 0.35rem;
+}
+
+.sub-block-table {
+  width: 100%;
+  font-size: 0.85rem;
+}
+
+.sub-block-table th,
+.sub-block-table td {
+  padding: 0.35rem 0.25rem;
+  vertical-align: top;
+}
+
+.sub-block-table code {
+  font-size: 0.8rem;
+}
+
+.my-subs-table {
+  margin-top: 0.5rem;
+}
+
+form.inline-form {
+  display: inline;
+  margin: 0;
+}
+
+details.anom-manual {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+details.anom-manual summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.small {
+  font-size: 0.85rem;
+}
+
 label {
   display: block;
   margin-bottom: 0.35rem;
@@ -211,6 +269,7 @@ input[type="text"],
 input[type="email"],
 input[type="number"],
 input[type="password"],
+input:not([type]),
 select,
 textarea {
   width: 100%;
@@ -220,6 +279,40 @@ textarea {
   border: 1px solid var(--border);
   background: #0f172a;
   color: var(--text);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: rgba(138, 155, 176, 0.85);
+}
+
+/* Компактные поля внутри таблиц/карточек */
+.mini-input {
+  max-width: 140px;
+  width: 140px;
+  padding: 0.4rem 0.5rem;
+  font-size: 0.9rem;
+}
+
+.tiny-input {
+  max-width: 72px;
+  width: 72px;
+  padding: 0.4rem 0.5rem;
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+.sub-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.sub-actions form {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex-wrap: wrap;
 }
 
 textarea {
@@ -259,11 +352,309 @@ th {
   font-weight: 600;
 }
 
+/* Таблица рейтинга аналитики: скролл внутри рамки, числа без переноса */
+.card-rating .table-rating-shell {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(8, 12, 22, 0.45);
+  padding: 2px;
+}
+
+.table-scroll {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: visible;
+  -webkit-overflow-scrolling: touch;
+  margin: 0.5rem 0 0.75rem;
+  padding-bottom: 4px;
+  scrollbar-gutter: stable;
+}
+
+.table-rating {
+  width: max-content;
+  min-width: 100%;
+  max-width: none;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+
+.table-rating thead th {
+  vertical-align: bottom;
+  line-height: 1.25;
+  padding: 0.55rem 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  background: rgba(20, 28, 42, 0.95);
+}
+
+.table-rating tbody td {
+  vertical-align: middle;
+  padding: 0.5rem 0.5rem;
+  border-bottom: 1px solid rgba(42, 53, 72, 0.65);
+}
+
+.table-rating tbody tr:nth-child(even) td {
+  background: rgba(12, 18, 30, 0.35);
+}
+
+.table-rating tbody tr:hover td {
+  background: rgba(45, 111, 212, 0.08);
+}
+
+.table-rating th.col-num,
+.table-rating td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.table-rating th.col-num {
+  text-align: right;
+}
+
+.table-rating .th-unit {
+  display: block;
+  margin-top: 0.1rem;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--muted);
+  line-height: 1.1;
+}
+
+.table-rating th.col-basis,
+.table-rating .td-basis {
+  min-width: 9rem;
+  max-width: 14rem;
+}
+
+.table-rating .td-basis {
+  word-break: break-word;
+  hyphens: auto;
+}
+
+.table-rating th.col-narrow {
+  white-space: nowrap;
+}
+
+.table-rating th.col-signal {
+  white-space: nowrap;
+}
+
+.table-rating th.col-total,
+.table-rating td.col-total {
+  min-width: 6.5rem;
+  font-weight: 600;
+}
+
+.table-rating td.col-total strong {
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.table-rating th.col-sub,
+.table-rating .td-sub {
+  min-width: 9.25rem;
+  white-space: nowrap;
+}
+
+.table-rating .td-sub {
+  vertical-align: middle;
+}
+
+/* Компактные подписки внутри рейтинга */
+.table-rating .sub-details {
+  display: inline-block;
+}
+
+.table-rating .sub-details summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.38rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid rgba(42, 53, 72, 0.9);
+  background: rgba(51, 65, 85, 0.55);
+  color: var(--text);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.table-rating .sub-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.table-rating .sub-details[open] summary {
+  background: rgba(45, 111, 212, 0.18);
+  border-color: rgba(45, 111, 212, 0.45);
+}
+
+.table-rating .sub-details > .sub-actions {
+  margin-top: 0.45rem;
+}
+
+.table-rating .sub-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.table-rating .sub-actions form {
+  display: grid;
+  grid-template-columns: 70px auto;
+  gap: 0.35rem;
+  align-items: center;
+  justify-content: start;
+}
+
+.table-rating .sub-actions form button {
+  padding: 0.38rem 0.6rem;
+  font-size: 0.86rem;
+  border-radius: 8px;
+}
+
+.table-rating .sub-actions .mini-input {
+  width: 70px;
+  max-width: 70px;
+  padding: 0.32rem 0.45rem;
+  font-size: 0.86rem;
+}
+
+.table-rating .sub-actions .tiny-input {
+  width: 54px;
+  max-width: 54px;
+  padding: 0.32rem 0.45rem;
+  font-size: 0.86rem;
+  text-align: center;
+}
+
+.table-rating .sub-actions form[action*=\"subscribe_anomaly\"] {
+  grid-template-columns: 54px auto;
+}
+
+.table-rating .signal-pill {
+  display: inline-block;
+  padding: 0.15rem 0.45rem;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  background: rgba(45, 111, 212, 0.18);
+  border: 1px solid rgba(45, 111, 212, 0.35);
+}
+
+.rating-details {
+  margin-top: 0.75rem;
+}
+
+.rating-details summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Глобальное table { width:100% } не должно ломать рейтинг */
+.table-scroll > table.table-rating {
+  width: max-content;
+}
+
+/* Матрица (5×5): компактные ячейки и фиксированный заголовок */
+.table-matrix {
+  width: max-content;
+  min-width: 100%;
+  max-width: none;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+
+.table-matrix thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: rgba(20, 28, 42, 0.98);
+  border-bottom: 1px solid var(--border);
+  vertical-align: bottom;
+  white-space: normal;
+}
+
+.table-matrix .matrix-corner {
+  min-width: 220px;
+}
+
+.table-matrix .matrix-dest {
+  min-width: 220px;
+}
+
+.table-matrix .matrix-basis {
+  background: rgba(12, 18, 30, 0.35);
+}
+
+.table-matrix .matrix-cell {
+  vertical-align: top;
+}
+
+.table-matrix .matrix-total {
+  font-variant-numeric: tabular-nums;
+}
+
+.table-matrix tbody tr:nth-child(even) td {
+  background: rgba(12, 18, 30, 0.22);
+}
+
+.table-matrix tbody tr:hover td {
+  background: rgba(45, 111, 212, 0.07);
+}
+
 .actions {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
   margin-top: 1rem;
+}
+
+/* Toast notifications (PRG feedback) */
+.toast {
+  border: 1px solid var(--border);
+  background: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(8px);
+  border-radius: 10px;
+  padding: 0.6rem 0.8rem;
+  margin: 0.75rem 0 1rem;
+  font-size: 0.92rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.toast.ok {
+  border-color: rgba(61, 158, 106, 0.55);
+}
+
+.toast.err {
+  border-color: rgba(232, 93, 93, 0.55);
+}
+
+.toast strong {
+  font-weight: 700;
+}
+
+.toast a.dismiss {
+  color: var(--muted);
+  font-weight: 600;
+  text-decoration: none;
+  padding: 0.1rem 0.35rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+.toast a.dismiss:hover {
+  color: var(--text);
+  text-decoration: none;
 }
 
 pre.log {

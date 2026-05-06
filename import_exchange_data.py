@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import re
 import warnings
 from pathlib import Path
 
@@ -81,6 +82,32 @@ async def sync_instruments_catalog(session, df: pd.DataFrame) -> tuple[int, int]
 
     df = _rename_df(df)
     ok, skipped = 0, 0
+
+    def _basis_key(name: str) -> str:
+        """
+        Нормализация названия базиса для устойчивого матчинга между Excel и БД:
+        - ё→е, lower
+        - убираем содержимое скобок: "Пункт (ЯНОС)" == "Пункт ЯНОС"
+        - нормализуем дефисы/тире и пробелы вокруг них
+        - схлопываем пробелы
+        """
+        s = clean_excel_text(name).lower().replace("ё", "е")
+        s = re.sub(r"\(.*?\)", " ", s)
+        # разные виды дефиса/тире -> '-'
+        s = s.replace("—", "-").replace("–", "-")
+        # пробелы вокруг дефиса
+        s = re.sub(r"\s*-\s*", "-", s)
+        s = re.sub(r"\s+", " ", s).strip()
+        return s
+
+    # Предзагружаем карту нормализованного имени → Basis, чтобы не SELECT *basis* на каждую строку
+    basis_key_to_obj: dict[str, Basis] = {}
+    q_all = await session.execute(select(Basis))
+    for b in q_all.scalars().all():
+        k = _basis_key(str(getattr(b, "name", "") or ""))
+        if k and k not in basis_key_to_obj:
+            basis_key_to_obj[k] = b
+
     for _, raw in df.iterrows():
         row = raw.to_dict()
         code = _pick(row, "code", "код", "instrument_code", "код_инструмента")
@@ -107,15 +134,10 @@ async def sync_instruments_catalog(session, df: pd.DataFrame) -> tuple[int, int]
             session.add(pr)
             await session.flush()
 
-        bs = (
-            await session.execute(select(Basis).where(Basis.name == basis_s))
-        ).scalar_one_or_none()
+        bs = (await session.execute(select(Basis).where(Basis.name == basis_s))).scalar_one_or_none()
         if not bs:
-            q_all = await session.execute(select(Basis))
-            for cand in q_all.scalars().all():
-                if clean_excel_text(cand.name) == basis_s:
-                    bs = cand
-                    break
+            # fallback: normalized matching (скобки/дефисы/пробелы)
+            bs = basis_key_to_obj.get(_basis_key(basis_s))
         if not bs:
             logger.warning("Базис «%s» не найден в БД — сначала загрузите баба.xlsx", basis_s)
             skipped += 1

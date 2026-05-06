@@ -3,37 +3,15 @@
 {% block content %}
 <div class="card">
   <h1>Кабинет</h1>
-  <p>Вы вошли как <b>{{ user.email }}</b> · <a href="/logout">Выйти</a></p>
-  {% if msg == 'sub' %}<p class="ok">Подписка сохранена.</p>{% endif %}
+  <p>
+    Вы вошли как <b>{{ user.email }}</b>
+    · <a href="/cabinet/subscriptions">Подписки</a>
+    · <a href="/cabinet/destinations">Мои направления</a>
+    · <a href="/logout">Выйти</a>
+  </p>
   {% if msg == 'lead' %}<p class="ok">Заявка отправлена.</p>{% endif %}
-  {% if err == 'price' %}<p class="error">Укажите корректную целевую цену.</p>{% endif %}
   {% if err == 'lead' %}<p class="error">Заявка не найдена или чужая.</p>{% endif %}
   {% if err == 'lead_send' %}<p class="error">Не удалось отправить заявку (SMTP?).</p>{% endif %}
-
-  <h2>Новая подписка на снижение цены</h2>
-  <form method="post" action="/cabinet/subscribe">
-    <label for="product_id">Продукт</label>
-    <select name="product_id" id="product_id" required>
-      {% for p in products %}
-      <option value="{{ p.id }}">{{ p.name }}</option>
-      {% endfor %}
-    </select>
-    <label for="target_price">Целевая цена ₽/т (минимум по рынку ниже — пришлём уведомление)</label>
-    <input type="text" name="target_price" id="target_price" required placeholder="75000"/>
-    <div class="actions"><button class="btn" type="submit">Подписаться</button></div>
-  </form>
-
-  <h2>Мои подписки</h2>
-  {% if alerts %}
-  <table>
-    <tr><th>Продукт</th><th>Цель ₽/т</th></tr>
-    {% for row in alerts %}
-    <tr><td>{{ row.product_name }}</td><td>{{ '%.0f'|format(row.a.target_price) }}</td></tr>
-    {% endfor %}
-  </table>
-  {% else %}
-  <p class="muted">Нет активных подписок.</p>
-  {% endif %}
 
   <h2>Мои расчёты</h2>
   {% if requests %}

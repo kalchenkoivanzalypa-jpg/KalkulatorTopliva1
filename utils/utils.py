@@ -47,13 +47,73 @@ SAKHALIN_CITY_COORDS: dict[str, tuple[float, float]] = {
     "ноглики": (51.7903, 143.1294),
 }
 
+# Крупные пункты, для которых в CityDestination нередко попадают неверные координаты
+# (одноимённые деревни, «в области» и т.п.) — фиксируем центр города для расчёта доставки.
+CANONICAL_CITY_COORDS: dict[str, tuple[float, float]] = {
+    # Город Свободный (Амурская обл.), не одноимённые пункты в других регионах
+    "свободный": (51.3807, 128.1285),
+    "тында": (55.1547, 124.7238),
+    # Ванино (Хабаровский край): иначе часто подхватывается одноимённое в других регионах/с неверными координатами.
+    "ванино": (49.0850, 140.2650),
+    # Якутск (центр); ж/д тариф считается до Нижнего Бестяха — см. rail_logistics.CITY_KEY_TO_RAIL_DEST_ESR
+    "якутск": (62.0278, 129.7325),
+    "архангельск": (64.5399, 40.5158),
+    "мурманск": (68.9585, 33.0827),
+    "петрозаводск": (61.7850, 34.3469),
+    "северодвинск": (64.5625, 39.8182),
+    "вологда": (59.2181, 39.8978),
+    "сыктывкар": (61.6688, 50.8365),
+    # Благовещенск (Амурская обл.) — иначе часто подхватывается одноимённый город под Уфой.
+    "благовещенск": (50.2906, 127.5272),
+    # Артём (Приморский край) — иначе может подтянуться одноимённый населённый пункт в другом регионе.
+    "артем": (43.3595, 132.1858),
+}
+
+
+def _strip_trailing_region_suffix(s: str) -> str:
+    """
+    Убирает хвост «… амурская область», «… хабаровский край» и т.п., чтобы
+    «город Свободный Амурская область» сходился с записью «Свободный» в БД и CANONICAL.
+    """
+    t = (s or "").strip()
+    if not t:
+        return t
+    # Длинные фразы — первыми (жадное совпадение по началу строки не нужно)
+    suffixes = (
+        "еврейская автономная область",
+        "чукотский автономный округ",
+        "ханты мансийский автономный округ югра",
+        "ямало ненецкий автономный округ",
+        "республика саха якутия",
+        "амурская область",
+        "амурская обл",
+        "магаданская область",
+        "сахалинская область",
+        "приморский край",
+        "хабаровский край",
+        "забайкальский край",
+        "камчатский край",
+        "пермский край",
+        "красноярский край",
+        "ставропольский край",
+        "алтайский край",
+    )
+    low = t.lower()
+    for suf in suffixes:
+        suf_l = suf.lower()
+        if low.endswith(suf_l):
+            cut = len(t) - len(suf_l)
+            t = t[:cut].rstrip(" ,-—–").strip()
+            break
+    return t
+
 
 def normalize_city_name_key(city_name: str) -> str:
     """
     Нормализация имени для поиска в БД:
     - lowercase
     - ё->е
-    - удаляем префиксы типа "г.", "с.", "п." и слова "город/село/поселок"
+    - удаляем префиксы типа "г.", "с.", "п.", "ст." и слова "город/село/поселок"
     - схлопываем пробелы и чистим края
     """
     import re
@@ -61,14 +121,32 @@ def normalize_city_name_key(city_name: str) -> str:
     s = (city_name or "").strip().lower()
     s = s.replace("ё", "е")
     s = s.replace("—", "-").replace("–", "-").replace("−", "-").replace("‑", "-")
+    # Если в имени есть регион в скобках (например "Псков (Псковская область)"),
+    # убираем его для устойчивого поиска по "Псков".
+    s = re.sub(r"\s*\([^)]*\)\s*$", "", s).strip()
     # Для устойчивого поиска считаем дефис и пробел эквивалентными
     s = s.replace("-", " ")
+
+    # Ж/д префиксы — иначе «ст. Тында» не совпадает с CANONICAL «тында» и с названием в БД
+    for prefix in (
+        "ж/д станция ",
+        "жд станция ",
+        "станция ",
+        "ст.",
+        "ст ",
+        "ж/д ",
+        "жд ",
+    ):
+        if s.startswith(prefix):
+            s = s[len(prefix) :].strip()
+            break
 
     s = re.sub(r"^(г\.|город|гор)\s+", "", s, flags=re.IGNORECASE)
     s = re.sub(r"^(с\.|село)\s+", "", s, flags=re.IGNORECASE)
     s = re.sub(r"^(п\.|поселок|посел|пос)\s+", "", s, flags=re.IGNORECASE)
     s = re.sub(r"\s+г\.?$", "", s, flags=re.IGNORECASE)
     s = re.sub(r"^[,(]+|[),.]+$", "", s)
+    s = _strip_trailing_region_suffix(s)
     s = re.sub(r"\s+", " ", s)
     return s
 
@@ -88,6 +166,10 @@ async def get_coordinates_from_city(city_name: str, session: AsyncSession = None
         # чтобы избежать ложных совпадений с одноименными пунктами на материке.
         return SAKHALIN_CITY_COORDS[city_name_key]
 
+    if city_name_key in CANONICAL_CITY_COORDS:
+        logger.info("✅ Эталонные координаты для населённого пункта: %s", city_name_key)
+        return CANONICAL_CITY_COORDS[city_name_key]
+
     def _is_sakhalin_coord(lat: float, lon: float) -> bool:
         return 45.0 <= float(lat) <= 55.0 and 141.0 <= float(lon) <= 146.0
     
@@ -95,6 +177,72 @@ async def get_coordinates_from_city(city_name: str, session: AsyncSession = None
     
     # Сначала проверяем в локальном кэше
     if session:
+        # 0.5) Быстрый путь для нашей схемы импорта: name может быть вида "Псков (Псковская область)".
+        # В SQLite lower()/LIKE плохо работают с кириллицей, поэтому делаем case-sensitive LIKE по исходной строке.
+        # Чтобы не зависеть от регистра ввода ("тында" vs "Тында"), пробуем несколько вариантов написания.
+        def _title_first(s: str) -> str:
+            s = (s or "").strip()
+            if not s:
+                return s
+            return s[0].upper() + s[1:]
+
+        probes: list[str] = []
+        for s in [city_name, city_name_ye]:
+            s0 = (s or "").strip()
+            if not s0:
+                continue
+            probes.append(s0)
+            probes.append(_title_first(s0))
+
+        # 0.6) Сначала устойчивый путь: регистр не должен менять координаты.
+        # Быстрый путь ниже (== / case-sensitive LIKE) может взять «первую попавшуюся» строку
+        # с тем же префиксом/написанием, если не проверять normalize(name)==city_name_key.
+        if city_name_key:
+            result = await session.execute(
+                select(CityDestination)
+                .where(
+                    func.replace(func.lower(func.trim(CityDestination.name)), "ё", "е").ilike(
+                        f"%{city_name_key}%"
+                    )
+                )
+                .order_by(CityDestination.request_count.desc())
+                .limit(200)
+            )
+            pool = result.scalars().all()
+            if pool:
+                best = None
+                best_pop = -1
+                for c in pool:
+                    if not c or not c.name:
+                        continue
+                    if normalize_city_name_key(c.name) != city_name_key:
+                        continue
+                    pop = int(getattr(c, "request_count", 0) or 0)
+                    if pop > best_pop:
+                        best_pop = pop
+                        best = c
+                if best is not None:
+                    logger.info(f"✅ Найдено по нормализованному ключу (устойчиво к регистру): {best.name}")
+                    return (best.latitude, best.longitude)
+
+        seen_probe: set[str] = set()
+        for probe in probes:
+            if not probe or probe in seen_probe:
+                continue
+            seen_probe.add(probe)
+            result = await session.execute(
+                select(CityDestination)
+                .where(
+                    (CityDestination.name == probe)
+                    | (CityDestination.name.like(f"{probe} (%)"))
+                )
+                .order_by(CityDestination.request_count.desc())
+                .limit(25)
+            )
+            for row in result.scalars().all():
+                if row and normalize_city_name_key(row.name) == city_name_key:
+                    return (row.latitude, row.longitude)
+
         # 0) Для сахалинских городов сначала пытаемся взять запись из Сахалинской области.
         if is_sakhalin_query:
             result = await session.execute(
@@ -159,7 +307,15 @@ async def get_coordinates_from_city(city_name: str, session: AsyncSession = None
                     return (c.latitude, c.longitude)
             # Если точного нормализованного не нашли — НЕ берём первый попавшийся,
             # иначе короткие запросы типа "ангарск" часто «уезжают» в "нижнеангарск".
-            key_to_city = {normalize_city_name_key(c.name): c for c in candidates if c and c.name}
+            # Важно: не перезаписывать одинаковые ключи — первые строки уже отсортированы
+            # по request_count DESC (т.е. более популярные города должны выигрывать).
+            key_to_city = {}
+            for c in candidates:
+                if not c or not c.name:
+                    continue
+                k = normalize_city_name_key(c.name)
+                if k and k not in key_to_city:
+                    key_to_city[k] = c
             matches = difflib.get_close_matches(city_name_key, list(key_to_city.keys()), n=1, cutoff=0.90)
             if matches:
                 picked = key_to_city[matches[0]]
@@ -184,11 +340,13 @@ async def get_coordinates_from_city(city_name: str, session: AsyncSession = None
             )
             fuzzy_pool = result.scalars().all()
             if fuzzy_pool:
-                key_to_city = {
-                    normalize_city_name_key(c.name): c
-                    for c in fuzzy_pool
-                    if c and c.name
-                }
+                key_to_city = {}
+                for c in fuzzy_pool:
+                    if not c or not c.name:
+                        continue
+                    k = normalize_city_name_key(c.name)
+                    if k and k not in key_to_city:
+                        key_to_city[k] = c
                 matches = difflib.get_close_matches(
                     city_name_key,
                     list(key_to_city.keys()),

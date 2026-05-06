@@ -4,8 +4,8 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="theme-color" content="#0c1220"/>
-  <meta name="description" content="Ориентировочный расчёт стоимости нефтепродуктов с доставкой и аналитика по данным биржи."/>
-  <title>{% block title %}НК калькулятор топлива{% endblock %}</title>
+  <meta name="description" content="Ориентировочный расчёт нефтепродуктов с доставкой и аналитика по СПбМТСБ. Сервис ООО «НК-Востокнефтепродукт»."/>
+  <title>{% block title %}НК · калькулятор топлива{% endblock %}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&display=swap" rel="stylesheet"/>
@@ -25,6 +25,8 @@
           <a class="nav-site" href="{{ marketing_site_url }}" target="_blank" rel="noopener">Сайт компании</a>
           <a href="/calc">Расчёт</a>
           <a href="/analytics">Аналитика</a>
+          <a href="/cabinet/subscriptions">Подписки</a>
+          <a href="/basises">Базисы</a>
           <a href="/cabinet">Кабинет</a>
           <a href="/about">О сервисе</a>
           <a href="/login">Войти</a>
@@ -37,12 +39,50 @@
       </div>
     {% endif %}
     <main>
+      {% set ok = request.query_params.get('ok') %}
+      {% set err = request.query_params.get('err') %}
+      {% if ok %}
+        {% set ok_text = {
+          'sub': 'Подписка сохранена.',
+          'anom': 'Подписка на аномалию сохранена.',
+          'digest': 'Подписка на ежедневную сводку сохранена.',
+          'digest_off': 'Подписка на сводку отключена.',
+          'anom_off': 'Подписка на аномалию отключена.',
+          'price_off': 'Подписка «цена ↓» отключена.',
+          'dest_add': 'Направление сохранено.',
+          'dest_off': 'Направление удалено из списка.',
+          'lead': 'Заявка отправлена.',
+        }.get(ok, 'Готово.') %}
+        <div class="toast ok">
+          <div><strong>✅</strong> {{ ok_text }}</div>
+          <a class="dismiss" href="{{ request.url.remove_query_params('ok') }}">Закрыть</a>
+        </div>
+      {% elif err %}
+        {% set err_text = {
+          'price': 'Некорректная цена для подписки.',
+          'anom': 'Не удалось оформить подписку на аномалию.',
+          'anom_thr': 'Некорректный порог аномалии.',
+          'anom_off': 'Подписка на аномалию не найдена.',
+          'digest': 'Не удалось сохранить подписку на сводку.',
+          'digest_pair': 'На базисе нет выбранного продукта.',
+          'digest_off': 'Подписка на сводку не найдена.',
+          'price_off': 'Подписка не найдена.',
+          'dest': 'Не удалось сохранить направление. Уточните пункт назначения.',
+          'lead': 'Не удалось отправить заявку.',
+          'lead_send': 'Ошибка отправки заявки.',
+          'sub': 'Не удалось оформить подписку.',
+        }.get(err, 'Произошла ошибка.') %}
+        <div class="toast err">
+          <div><strong>⛔</strong> {{ err_text }}</div>
+          <a class="dismiss" href="{{ request.url.remove_query_params('err') }}">Закрыть</a>
+        </div>
+      {% endif %}
       {% block content %}{% endblock %}
     </main>
     {% if not embed %}
       <footer class="site-footer">
         <p>
-          <span class="muted">Сервис компании НК</span>
+          <span class="muted">Сервис ООО «НК-Востокнефтепродукт»</span>
           ·
           <a href="{{ marketing_site_url }}" target="_blank" rel="noopener">Главный сайт</a>
         </p>

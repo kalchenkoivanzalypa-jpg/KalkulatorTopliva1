@@ -1,7 +1,7 @@
 def normalize_name(name):
     return name.lower().replace("ё", "е").strip()
 
-    def find_station(graph, query):
+def find_station(graph, query):
     query = normalize_name(query)
 
     matches = []

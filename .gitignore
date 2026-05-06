@@ -16,3 +16,4 @@ data/bulletins/*.pdf
 
 # misc
 .cursor/
+rzd-api/

@@ -1,6 +1,8 @@
 """Главная и статические страницы."""
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from web.jinja_env import templates
@@ -15,4 +17,8 @@ async def home(request: Request):
 
 @router.get("/about", response_class=HTMLResponse)
 async def about(request: Request):
-    return templates.TemplateResponse("about.html", {"request": request})
+    max_bot_link = (os.getenv("MAX_BOT_LINK") or "").strip()
+    return templates.TemplateResponse(
+        "about.html",
+        {"request": request, "max_bot_link": max_bot_link},
+    )

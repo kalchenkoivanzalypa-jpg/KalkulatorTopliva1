@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Базисы{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Базисы</h1>
+
+  <div style="overflow:auto;">
+    <table style="width:100%;border-collapse:collapse;">
+      <thead>
+        <tr>
+          <th style="text-align:left;padding:8px;border-bottom:1px solid var(--border);">Базис</th>
+          <th style="text-align:left;padding:8px;border-bottom:1px solid var(--border);">Доставка</th>
+          <th style="text-align:left;padding:8px;border-bottom:1px solid var(--border);">Товары</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for it in items %}
+        <tr>
+          <td style="padding:8px;border-bottom:1px solid var(--border);">{{ it.name }}</td>
+          <td style="padding:8px;border-bottom:1px solid var(--border);">{{ it.transport }}</td>
+          <td style="padding:8px;border-bottom:1px solid var(--border);" class="muted">{{ it.products }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <p><a href="/cabinet">← В кабинет</a></p>
+</div>
+{% endblock %}
+

@@ -1,0 +1,314 @@
+{% extends "base.html" %}
+{% block title %}Подписки{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Подписки</h1>
+  <p><a href="/cabinet">← Кабинет</a> · <a href="/basises">Справочник базисов</a> · вы вошли как <b>{{ user.email }}</b></p>
+  {% if request.query_params.get('err') == 'table_digest' %}
+  <p class="muted" style="color:var(--danger,#c66);">Не удалось сохранить таблицу: проверьте лимиты (до 5 топлив, 12 базисов, 8 направлений; не более 36 сочетаний топливо×базис).</p>
+  {% endif %}
+  {% if request.query_params.get('err') == 'table_channels' %}
+  <p class="muted" style="color:var(--danger,#c66);">Выберите хотя бы один канал: email или MAX.</p>
+  {% endif %}
+</div>
+
+<div class="grid subscription-grid cols-3">
+  <section class="card subscription-block" id="digest">
+    <h2>Ежедневная сводка</h2>
+    <p class="muted">Зачем: раз в день в 14:15 (МСК) пришлём актуальные биржевые цены по выбранному базису — можно указать одно топливо или все доступные на этом базисе строки с ценой. Так вы остаётесь в курсе актуальных цен на бирже по нужному базису и проще ориентируетесь при планировании закупок.</p>
+    <form method="post" action="/cabinet/digest_subscribe">
+      <label for="digest_basis_id">Базис</label>
+      <select name="basis_id" id="digest_basis_id" required>
+        {% for b in basises %}
+        <option value="{{ b.id }}">{{ ('🚂 ' if b.transport_type=='rail' else '🚛 ') ~ b.name }}</option>
+        {% endfor %}
+      </select>
+      <label for="digest_mode">Получать</label>
+      <select name="delivery_mode" id="digest_mode" required>
+        <option value="prices_only">1) Просто цены (СПбМТСБ)</option>
+        <option value="with_delivery">2) Цены с доставкой (оценка)</option>
+      </select>
+      <div id="digest_dest_wrap" style="display:none;">
+        <label for="digest_destination">Назначение (для доставки)</label>
+        <input type="text" name="destination" id="digest_destination" placeholder="Ванино / Свободный / ст. Дземги" autocomplete="off"/>
+        <p class="muted small">Доставка ориентировочная. Точное КП — по запросу в ООО «НК-Востокнефтепродукт».</p>
+      </div>
+      <label for="digest_product_scope">Топливо</label>
+      <select name="product_scope" id="digest_product_scope" required>
+        <option value="all">Все доступные на базисе</option>
+      </select>
+      <div class="actions"><button class="btn" type="submit">Подписаться</button></div>
+    </form>
+  </section>
+
+  <section class="card subscription-block" id="price">
+    <h2>Снижение цены</h2>
+    <p class="muted"><b>Зачем:</b> пришлём уведомление, когда по вашему запросу цена снизится или станет равной указанной цели — чтобы не пропустить выгодный уровень.</p>
+    <form method="post" action="/cabinet/subscribe">
+      <label for="product_id">Продукт</label>
+      <select name="product_id" id="product_id" required>
+        {% for p in products %}
+        <option value="{{ p.id }}">{{ p.name }}</option>
+        {% endfor %}
+      </select>
+      <label for="basis_id">Базис</label>
+      <select name="basis_id" id="basis_id">
+        <option value="">Любой базис (минимум по рынку)</option>
+        {% for b in basises %}
+        <option value="{{ b.id }}">{{ ('🚂 ' if b.transport_type=='rail' else '🚛 ') ~ b.name }}</option>
+        {% endfor %}
+      </select>
+      <label for="target_price">Целевая цена ₽/т</label>
+      <input type="text" name="target_price" id="target_price" required placeholder="75000" inputmode="decimal"/>
+      <div class="actions"><button class="btn" type="submit">Подписаться</button></div>
+    </form>
+  </section>
+
+  <section class="card subscription-block" id="anomaly">
+    <h2>Аномалия</h2>
+    <p class="muted"><b>Зачем:</b> пришлём уведомление, если за день цена по биржевому инструменту изменилась не меньше чем на заданный вами порог (%). Удобно ловить резкие движения на торгах.</p>
+    {% if anomaly_pairs %}
+    <form method="post" action="/cabinet/subscribe_anomaly">
+      <label for="anom_basis_id">Базис</label>
+      <select name="basis_id" id="anom_basis_id" required>
+        {% for b in anomaly_basises %}
+        <option value="{{ b.id }}">{{ b.name }}</option>
+        {% endfor %}
+      </select>
+      <label for="anom_product_id">Продукт на этом базисе</label>
+      <select name="product_id" id="anom_product_id" required></select>
+      <label for="threshold_pct">Порог % (срабатывание при |Δ| ≥ порога)</label>
+      <input type="text" name="threshold_pct" id="threshold_pct" value="3" inputmode="decimal"/>
+      <label for="anom_direction">Направление</label>
+      <select name="direction" id="anom_direction">
+        <option value="any">Рост или падение (|Δ|)</option>
+        <option value="up">Только рост (Δ ≥ порога)</option>
+        <option value="down">Только падение (Δ ≤ −порога)</option>
+      </select>
+      <div class="actions"><button class="btn" type="submit">Подписаться</button></div>
+    </form>
+    <script type="application/json" id="anomaly-pairs-data">{{ anomaly_pairs | tojson }}</script>
+    <script>
+    (function () {
+      var raw = document.getElementById('anomaly-pairs-data');
+      if (!raw) return;
+      var pairs = JSON.parse(raw.textContent || '[]');
+      var byBasis = {};
+      pairs.forEach(function (row) {
+        var bid = String(row.basis_id);
+        if (!byBasis[bid]) byBasis[bid] = [];
+        byBasis[bid].push(row);
+      });
+      var basisSel = document.getElementById('anom_basis_id');
+      var prodSel = document.getElementById('anom_product_id');
+      function refill() {
+        var bid = basisSel && basisSel.value;
+        prodSel.innerHTML = '';
+        (byBasis[bid] || []).forEach(function (row) {
+          var opt = document.createElement('option');
+          opt.value = row.product_id;
+          opt.textContent = (row.label.split(' — ')[1] || row.label);
+          prodSel.appendChild(opt);
+        });
+      }
+      if (basisSel) {
+        basisSel.addEventListener('change', refill);
+        refill();
+      }
+    })();
+    </script>
+    {% else %}
+    <p class="muted">Нет пар «базис + продукт» с кодом инструмента — после импорта бюллетеня подписка станет доступна. Ниже можно ввести код вручную.</p>
+    {% endif %}
+    <details class="anom-manual">
+      <summary>Код инструмента вручную</summary>
+      <p class="muted small">Если знаете код из бюллетеня СПбМТСБ — можно подписаться без выбора базиса и продукта.</p>
+      <form method="post" action="/cabinet/subscribe_anomaly">
+        <label for="instrument_code">Код</label>
+        <input type="text" name="instrument_code" id="instrument_code" placeholder="A592EFS060E" autocomplete="off"/>
+        <label for="threshold_pct_m">Порог %</label>
+        <input type="text" name="threshold_pct" id="threshold_pct_m" value="3"/>
+        <label for="anom_direction_m">Направление</label>
+        <select name="direction" id="anom_direction_m">
+          <option value="any">Рост или падение (|Δ|)</option>
+          <option value="up">Только рост (Δ ≥ порога)</option>
+          <option value="down">Только падение (Δ ≤ −порога)</option>
+        </select>
+        <div class="actions"><button class="btn secondary" type="submit">Подписаться по коду</button></div>
+      </form>
+    </details>
+  </section>
+</div>
+
+<div class="card" id="table-digest">
+  <h2>Ежедневная таблица (СПбМТСБ + доставка)</h2>
+  <p class="muted">
+    Раз в день в <b>14:15 МСК</b> пришлём таблицу: котировка, изменение к предыдущей сессии, объём и <b>итог ₽/т с доставкой</b> по выбранным направлениям.
+    Лимиты: до <b>5</b> топлив, <b>12</b> базисов, <b>8</b> направлений; сочетаний топливо×базис не более <b>36</b>.
+  </p>
+  <form method="post" action="/cabinet/table_digest_subscribe">
+    <label for="td_products">Топливо (Ctrl/Cmd — несколько)</label>
+    <select name="product_ids" id="td_products" multiple required size="8" class="multi-select">
+      {% for p in products %}
+      <option value="{{ p.id }}">{{ p.name }}</option>
+      {% endfor %}
+    </select>
+    <label for="td_basises">Базисы поставки</label>
+    <select name="basis_ids" id="td_basises" multiple required size="8" class="multi-select">
+      {% for b in basises %}
+      <option value="{{ b.id }}">{{ ('🚂 ' if b.transport_type=='rail' else '🚛 ') ~ b.name }}</option>
+      {% endfor %}
+    </select>
+    <label for="td_dests">Направления (города из справочника)</label>
+    <select name="destination_ids" id="td_dests" multiple required size="8" class="multi-select">
+      {% for d in destinations_pick %}
+      <option value="{{ d.id }}">{{ d.name }}</option>
+      {% endfor %}
+    </select>
+    <fieldset style="border:none;padding:0;margin:0.5rem 0;">
+      <label><input type="checkbox" name="notify_email" value="1" checked/> Email</label>
+      <label style="margin-left:1rem;"><input type="checkbox" name="notify_max" value="1" checked/> MAX</label>
+    </fieldset>
+    <p class="muted small">Нужен хотя бы один канал (email и/или MAX). Доставка ориентировочная.</p>
+    <div class="actions"><button class="btn" type="submit">Подписаться на таблицу</button></div>
+  </form>
+</div>
+
+<script>
+(function () {
+  async function fetchProducts(basisId) {
+    const r = await fetch(`/cabinet/basis_products?basis_id=${encodeURIComponent(basisId)}`, { credentials: 'same-origin' });
+    const j = await r.json();
+    return (j && j.ok && Array.isArray(j.items)) ? j.items : [];
+  }
+
+  // --- digest: basis -> product_scope (all + only available on basis)
+  const digestBasis = document.getElementById('digest_basis_id');
+  const digestScope = document.getElementById('digest_product_scope');
+  async function refillDigest() {
+    if (!digestBasis || !digestScope) return;
+    const basisId = digestBasis.value;
+    const items = await fetchProducts(basisId);
+    digestScope.innerHTML = '';
+    const allOpt = document.createElement('option');
+    allOpt.value = 'all';
+    allOpt.textContent = 'Все доступные на базисе';
+    digestScope.appendChild(allOpt);
+    items.forEach(function (it) {
+      const opt = document.createElement('option');
+      opt.value = String(it.id);
+      opt.textContent = it.name;
+      digestScope.appendChild(opt);
+    });
+  }
+  if (digestBasis) {
+    digestBasis.addEventListener('change', refillDigest);
+    refillDigest();
+  }
+
+  // --- digest: delivery mode toggles destination input
+  const digestMode = document.getElementById('digest_mode');
+  const digestDestWrap = document.getElementById('digest_dest_wrap');
+  const digestDest = document.getElementById('digest_destination');
+  function toggleDigestDest() {
+    if (!digestMode || !digestDestWrap) return;
+    const on = (digestMode.value === 'with_delivery');
+    digestDestWrap.style.display = on ? '' : 'none';
+    if (digestDest) digestDest.required = on;
+  }
+  if (digestMode) {
+    digestMode.addEventListener('change', toggleDigestDest);
+    toggleDigestDest();
+  }
+
+  // --- price: when basis picked -> restrict product list to this basis
+  const priceBasis = document.getElementById('basis_id');
+  const priceProd = document.getElementById('product_id');
+  const allProdHtml = priceProd ? priceProd.innerHTML : '';
+  async function refillPrice() {
+    if (!priceBasis || !priceProd) return;
+    const bid = priceBasis.value;
+    if (!bid) {
+      priceProd.innerHTML = allProdHtml;
+      return;
+    }
+    const items = await fetchProducts(bid);
+    priceProd.innerHTML = '';
+    items.forEach(function (it) {
+      const opt = document.createElement('option');
+      opt.value = String(it.id);
+      opt.textContent = it.name;
+      priceProd.appendChild(opt);
+    });
+  }
+  if (priceBasis) {
+    priceBasis.addEventListener('change', refillPrice);
+  }
+})();
+</script>
+
+<div class="card" id="my-subs">
+  <h2>Мои подписки</h2>
+  <p class="muted">Активные уведомления. Отключение не удаляет историю в базе, но новые письма/сообщения по ним не приходят.</p>
+  {% if not digest_rows and not alerts and not anomaly_alerts and not table_digest_rows %}
+  <p class="muted">Пока нет активных подписок — оформите их в блоках выше.</p>
+  {% else %}
+  <table class="sub-block-table my-subs-table">
+    <tr><th>Тип</th><th>Условие</th><th></th></tr>
+    {% for row in digest_rows %}
+    <tr>
+      <td>Ежедневная сводка</td>
+      <td>{{ row.basis_name }} — {{ row.scope }}</td>
+      <td>
+        <form method="post" action="/cabinet/digest_disable" class="inline-form">
+          <input type="hidden" name="digest_id" value="{{ row.d.id }}"/>
+          <button class="btn secondary" type="submit">Отключить</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+    {% for row in table_digest_rows %}
+    <tr>
+      <td>Таблица (биржа + доставка)</td>
+      <td>#{{ row.t.id }} — {{ row.label }}</td>
+      <td>
+        <form method="post" action="/cabinet/table_digest_disable" class="inline-form">
+          <input type="hidden" name="table_digest_id" value="{{ row.t.id }}"/>
+          <button class="btn secondary" type="submit">Отключить</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+    {% for row in alerts %}
+    <tr>
+      <td>Снижение цены</td>
+      <td>{{ row.product_name }} — {{ row.basis_name or 'любой базис' }}, ≤ {{ '%.0f'|format(row.a.target_price) }} ₽/т</td>
+      <td>
+        <form method="post" action="/cabinet/price_disable" class="inline-form">
+          <input type="hidden" name="price_alert_id" value="{{ row.a.id }}"/>
+          <button class="btn secondary" type="submit">Отключить</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+    {% for a in anomaly_alerts %}
+    <tr>
+      <td>Аномалия</td>
+      <td>
+        <code>{{ a.instrument_code }}</code>,
+        порог {{ '%g'|format(a.threshold_pct) }}%,
+        {% set d = (a.direction or 'any') %}
+        {% if d == 'up' %}только рост{% elif d == 'down' %}только падение{% else %}рост/падение{% endif %}
+      </td>
+      <td>
+        <form method="post" action="/cabinet/anomaly_disable" class="inline-form">
+          <input type="hidden" name="anomaly_id" value="{{ a.id }}"/>
+          <button class="btn secondary" type="submit">Отключить</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+</div>
+{% endblock %}

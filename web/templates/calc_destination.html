@@ -6,9 +6,13 @@
   <p class="muted">Продукт: <b>{{ product_name }}</b></p>
   {% if error %}<p class="error">{{ error }}</p>{% endif %}
   <form method="post" action="/calc/destination">
-    <label for="destination">Населённый пункт или ж/д станция</label>
+    <label for="destination">Населённый пункт, ж/д станция или 6-значный код ЕСР</label>
     <input type="text" name="destination" id="destination" required placeholder="Например: Иркутск"/>
-    <div class="actions"><button class="btn" type="submit">Найти базисы</button></div>
+    <p class="muted small">Подробная инструкция по вводу — в разделе <a href="/about">«О сервисе»</a>.</p>
+    <div class="actions">
+      <button class="btn" type="submit">Найти базисы</button>
+      <a class="btn secondary" href="/calc">Назад</a>
+    </div>
   </form>
 </div>
 {% endblock %}

@@ -91,6 +91,15 @@ class MarketQuote:
     instrument_code: str
     market_price: float
     volume_tons: Optional[float] = None
+    # Расширенные поля для аналитики (nullable)
+    price_market: Optional[float] = None
+    price_avg: Optional[float] = None
+    price_min: Optional[float] = None
+    price_max: Optional[float] = None
+    best_ask: Optional[float] = None
+    best_bid: Optional[float] = None
+    contracts: Optional[int] = None
+    volume_rub: Optional[float] = None
 
 
 
@@ -230,6 +239,31 @@ def _parse_volume_tons(cell: str) -> Optional[float]:
     return v
 
 
+def _parse_int(cell: str) -> Optional[int]:
+    if not cell or cell in ("-", "—", "–"):
+        return None
+    t = re.sub(r"[^\d]", "", str(cell))
+    if not t:
+        return None
+    try:
+        return int(t)
+    except Exception:
+        return None
+
+
+def _parse_volume_rub(cell: str) -> Optional[float]:
+    """
+    Объём торгов в рублях (если колонка есть). В бюллетенях часто в тыс./млн — парсим число как есть,
+    без попытки привести к рублям: для метрик важен порядок величины и динамика.
+    """
+    v = _parse_money(str(cell))
+    if v is None:
+        return None
+    if v < 0:
+        return None
+    return float(v)
+
+
 def _header_depth(table: List[List[Any]], start: int, max_depth: int = 6) -> int:
     depth = 0
     for i in range(start, min(start + max_depth, len(table))):
@@ -313,6 +347,40 @@ def _header_price_column_indices(
     return out
 
 
+def _header_liquidity_column_indices(
+    table: List[List[Any]], header_start: int, depth: int, width: int
+) -> Dict[str, int]:
+    """
+    Индексы колонок ликвидности (если есть):
+    - contracts: количество договоров
+    - volume_rub: объём в рублях
+    """
+    out: Dict[str, int] = {"contracts": -1, "volume_rub": -1}
+    for j in range(width):
+        label = _col_label(table, header_start, depth, j)
+        if not label:
+            continue
+        if ("договор" in label or "сдел" in label or "контракт" in label) and out["contracts"] < 0:
+            out["contracts"] = j
+        if ("руб" in label or "р." in label) and ("объем" in label or "объём" in label or "сумм" in label):
+            out["volume_rub"] = j
+    return out
+
+
+def _first_money_from_col(table: List[List[Any]], r: int, j: int) -> Optional[float]:
+    if j < 0:
+        return None
+    row = table[r] or []
+    if j >= len(row):
+        return None
+    # смотрим в ячейке и немного вправо (PDF часто “режет” число)
+    for jj in range(j, min(len(row), j + 3)):
+        v = _parse_money(_cell(row[jj]))
+        if v is not None and MARKET_PRICE_MIN <= float(v) <= MARKET_PRICE_MAX:
+            return float(v)
+    return None
+
+
 def _price_column_chain(
     idx: Dict[str, int], *, strict_market_only: bool
 ) -> Tuple[int, ...]:
@@ -345,7 +413,7 @@ def _map_columns(
     header_start: int,
     *,
     strict_market_only: bool,
-) -> Optional[Tuple[int, int, Tuple[int, ...]]]:
+) -> Optional[Tuple[int, int, Tuple[int, ...], Dict[str, int], Dict[str, int]]]:
     depth = _header_depth(table, header_start)
     width = max(
         (len(row or []) for row in table[header_start : header_start + depth]),
@@ -356,13 +424,14 @@ def _map_columns(
         label = _col_label(table, header_start, depth, j)
         if "код" in label and "инструмент" in label:
             col_code = j
-    idx = _header_price_column_indices(
+    idx_price = _header_price_column_indices(
         table, header_start, depth, width
     )
-    chain = _price_column_chain(idx, strict_market_only=strict_market_only)
+    idx_liq = _header_liquidity_column_indices(table, header_start, depth, width)
+    chain = _price_column_chain(idx_price, strict_market_only=strict_market_only)
     if col_code < 0 or not chain:
         return None
-    return header_start + depth, col_code, chain
+    return header_start + depth, col_code, chain, idx_price, idx_liq
 
 
 def _find_header_row_indices(table: List[List[Any]]) -> List[int]:
@@ -636,6 +705,9 @@ def _rows_quotes_loop(
     col_code: int,
     price_col_chain: Tuple[int, ...],
     only_a_prefix: bool,
+    *,
+    idx_price: Optional[Dict[str, int]] = None,
+    idx_liq: Optional[Dict[str, int]] = None,
 ) -> List[MarketQuote]:
     """
     Как _rows_data_loop, но возвращает MarketQuote (цена + объём).
@@ -684,7 +756,42 @@ def _rows_quotes_loop(
             vol = _parse_volume_tons(_cell(row[3]))
 
         for code, price in pairs:
-            out.append(MarketQuote(instrument_code=code, market_price=float(price), volume_tons=vol))
+            # Расширенные поля заполняем только когда в строке один код и шапка распознана.
+            ext = {}
+            if len(codes) == 1 and idx_price is not None:
+                ext = {
+                    "price_market": _first_money_from_col(table, r, idx_price.get("market", -1)),
+                    "price_avg": _first_money_from_col(table, r, idx_price.get("weighted", -1)),
+                    "price_min": _first_money_from_col(table, r, idx_price.get("min", -1)),
+                    "price_max": _first_money_from_col(table, r, idx_price.get("max", -1)),
+                    "best_ask": _first_money_from_col(table, r, idx_price.get("best_offer", -1)),
+                    "best_bid": _first_money_from_col(table, r, idx_price.get("best_bid", -1)),
+                }
+            contracts = None
+            vol_rub = None
+            if len(codes) == 1 and idx_liq is not None:
+                j_c = idx_liq.get("contracts", -1)
+                if j_c >= 0 and j_c < len(row):
+                    contracts = _parse_int(_cell(row[j_c]))
+                j_vr = idx_liq.get("volume_rub", -1)
+                if j_vr >= 0 and j_vr < len(row):
+                    vol_rub = _parse_volume_rub(_cell(row[j_vr]))
+
+            out.append(
+                MarketQuote(
+                    instrument_code=code,
+                    market_price=float(price),
+                    volume_tons=vol,
+                    price_market=ext.get("price_market") if ext else None,
+                    price_avg=ext.get("price_avg") if ext else None,
+                    price_min=ext.get("price_min") if ext else None,
+                    price_max=ext.get("price_max") if ext else None,
+                    best_ask=ext.get("best_ask") if ext else None,
+                    best_bid=ext.get("best_bid") if ext else None,
+                    contracts=contracts,
+                    volume_rub=vol_rub,
+                )
+            )
     return out
 
 
@@ -697,12 +804,10 @@ def _rows_from_segment(
     strict_market_only: bool,
 ) -> Tuple[List[Tuple[str, float]], Optional[FallbackColumnMap]]:
     """Пары и карта колонок для страниц без повторной шапки."""
-    mapped = _map_columns(
-        table, header_start, strict_market_only=strict_market_only
-    )
+    mapped = _map_columns(table, header_start, strict_market_only=strict_market_only)
     if not mapped:
         return [], None
-    data_start, col_code, chain = mapped
+    data_start, col_code, chain, _idx_price, _idx_liq = mapped
     chunk = _rows_data_loop(
         table, data_start, row_end, col_code, chain, only_a_prefix
     )
@@ -720,8 +825,17 @@ def _quotes_from_segment(
     mapped = _map_columns(table, header_start, strict_market_only=strict_market_only)
     if not mapped:
         return [], None
-    data_start, col_code, chain = mapped
-    chunk = _rows_quotes_loop(table, data_start, row_end, col_code, chain, only_a_prefix)
+    data_start, col_code, chain, idx_price, idx_liq = mapped
+    chunk = _rows_quotes_loop(
+        table,
+        data_start,
+        row_end,
+        col_code,
+        chain,
+        only_a_prefix,
+        idx_price=idx_price,
+        idx_liq=idx_liq,
+    )
     return chunk, (col_code, chain)
 
 
@@ -1018,6 +1132,15 @@ async def apply_spimex_history(
                     basis=bs.name,
                     price=float(q.market_price),
                     volume=float(q.volume_tons) if q.volume_tons is not None else None,
+                    price_market=float(q.price_market) if q.price_market is not None else None,
+                    price_avg=float(q.price_avg) if q.price_avg is not None else None,
+                    price_min=float(q.price_min) if q.price_min is not None else None,
+                    price_max=float(q.price_max) if q.price_max is not None else None,
+                    best_ask=float(q.best_ask) if q.best_ask is not None else None,
+                    best_bid=float(q.best_bid) if q.best_bid is not None else None,
+                    contracts=int(q.contracts) if q.contracts is not None else None,
+                    volume_rub=float(q.volume_rub) if q.volume_rub is not None else None,
+                    source_pdf=str(bulletin_path.name),
                     date=dt,
                 )
             )
@@ -1034,7 +1157,8 @@ async def apply_spimex_history(
 
 async def apply_prices(pairs: List[Tuple[str, float]]) -> Tuple[int, int, List[str]]:
     from db.database import AsyncSessionLocal
-    from db.database import ProductBasisPrice
+    from db.database import ProductBasisPrice, Product
+    from utils import canonical_fuel_display_name
 
     updated = 0
     missing_codes: List[str] = []
@@ -1048,6 +1172,15 @@ async def apply_prices(pairs: List[Tuple[str, float]]) -> Tuple[int, int, List[s
                 missing_codes.append(code)
                 logger.debug("Код %s нет в product_basis_prices", code)
                 continue
+            # АИ-100-К5: если «рыночная» цена ровно 10000 — это заглушка, не записываем.
+            try:
+                if float(price) == 10000.0:
+                    pr = await session.get(Product, int(getattr(row, "product_id", 0) or 0))
+                    canon = canonical_fuel_display_name(getattr(pr, "name", "") or "") if pr else ""
+                    if canon == "АИ-100-К5":
+                        continue
+            except Exception:
+                pass
             row.current_price = float(price)
             updated += 1
         await session.commit()
