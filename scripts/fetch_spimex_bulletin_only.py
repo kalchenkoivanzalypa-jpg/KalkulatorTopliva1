@@ -30,6 +30,7 @@ _spec = importlib.util.spec_from_file_location(
 )
 _mod = importlib.util.module_from_spec(_spec)
 assert _spec.loader is not None
+sys.modules[_spec.name] = _mod  # нужно до exec_module (иначе dataclass падает)
 _spec.loader.exec_module(_mod)
 download_bulletin = _mod.download_bulletin
 find_bulletin_for_date = _mod.find_bulletin_for_date
