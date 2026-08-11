@@ -1,0 +1,20 @@
+[Unit]
+Description=Fuel SPIMEX daily bulletin fetch+import+digest
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/opt/fuel_bot
+EnvironmentFile=/opt/fuel_bot/.env
+# С 13:50 МСК (timer) ретраи каждые 2 мин до дедлайна → импорт → restart → рассылка
+ExecStart=/opt/fuel_bot/venv/bin/python3 /opt/fuel_bot/scripts/run_spimex_daily_pipeline.py
+# SQLite/файлы снова у fuel, чтобы веб и боты писали без Permission denied
+ExecStartPost=/bin/bash -lc 'chown -R fuel:fuel /opt/fuel_bot/data/bulletins; chown fuel:fuel /opt/fuel_bot/fuel_bot.db /opt/fuel_bot/fuel_bot.db-wal /opt/fuel_bot/fuel_bot.db-shm 2>/dev/null || true'
+Nice=5
+TimeoutStartSec=5h
+
+[Install]
+WantedBy=multi-user.target

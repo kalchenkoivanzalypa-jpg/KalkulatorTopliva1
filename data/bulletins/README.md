@@ -1,28 +1,29 @@
-# PDF бюллетени СПбМТСБ (нефть, метрическая тонна)
+# PDF/XLS бюллетени СПбМТСБ (нефть)
 
-Сюда кладите файлы вида **`oil_YYYYMMDDHHMMSS.pdf`** (как с сайта биржи).
+Сюда попадают файлы вида **`oil_YYYYMMDDHHMMSS.pdf`** (основной формат) и редко `oil_xls_…xls`.
 
-## Расчёт цен в боте
+Источник на сайте биржи: [итоги торгов, нефтепродукты](https://spimex.com/markets/oil_products/trades/results/).
 
-Бот читает цены из таблицы **`product_basis_prices`** в БД. Чтобы подтянуть **самый свежий** бюллетень из этой папки:
+## Ручной импорт
 
 ```bash
 cd /path/to/fuel_bot
 python3 import_spimex_prices_from_pdf.py --bulletins-dir "./data/bulletins"
 ```
 
-Скрипт выбирает **один** PDF — с **наибольшей** меткой из **14 цифр** в имени (`20260320162000` → 2026-03-20 16:20:00). Остальные файлы остаются в архиве; при появлении более нового имени импорт подхватит его.
+## Автоматика (рекомендуется)
 
-## Автоимпорт при старте бота (опционально)
+VPS часто **не может** открыть `spimex.com` (`Connection refused`).  
+Рабочая схема: **GitHub Actions скачивает PDF → SCP на VPS → импорт/рассылка**.
 
-В `.env`:
+См. подробный сетап: [`docs/spimex_auto_fetch.md`](../../docs/spimex_auto_fetch.md).
 
-```env
-SPIMEX_IMPORT_ON_STARTUP=1
+Кратко на VPS после деплоя скриптов:
+
+```bash
+sudo chmod +x /opt/fuel_bot/scripts/spimex_vps_ingest.sh
+sudo mkdir -p /home/ops/spimex_inbox && sudo chown ops:ops /home/ops/spimex_inbox
+echo 'ops ALL=(root) NOPASSWD: /opt/fuel_bot/scripts/spimex_vps_ingest.sh' | sudo tee /etc/sudoers.d/fuel-spimex-ingest
+sudo chmod 440 /etc/sudoers.d/fuel-spimex-ingest
+sudo systemctl disable --now fuel-spimex-daily.timer || true
 ```
-
-При запуске `main.py` будет выполнен импорт из `data/bulletins` (тот же выбор «последний по дате в имени»). При ошибке или пустой папке в лог пишется предупреждение, бот не падает.
-
-## Git
-
-PDF обычно не коммитят из‑за размера. При необходимости храните копии отдельно или используйте Git LFS.

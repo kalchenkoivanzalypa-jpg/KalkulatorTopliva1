@@ -1,0 +1,11 @@
+[Unit]
+Description=Schedule Fuel SPIMEX daily bulletin pipeline (weekdays 13:50 MSK)
+
+[Timer]
+# VPS обычно в UTC: 10:50 UTC = 13:50 Europe/Moscow (без DST)
+OnCalendar=Mon..Fri *-*-* 10:50:00
+Persistent=true
+Unit=fuel-spimex-daily.service
+
+[Install]
+WantedBy=timers.target

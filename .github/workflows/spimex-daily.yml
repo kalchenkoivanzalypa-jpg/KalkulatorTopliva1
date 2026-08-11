@@ -1,0 +1,88 @@
+# Ежедневный бюллетень СПбМТСБ: скачивание НА GitHub Actions (VPS до spimex.com не достучится),
+# затем SCP + импорт/рестарт/рассылка на сервере.
+name: spimex-daily
+
+on:
+  schedule:
+    # 13:50 Europe/Moscow = 10:50 UTC (МСК без перевода часов)
+    - cron: "50 10 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      trade_date:
+        description: "YYYY-MM-DD (пусто = сегодня по МСК)"
+        required: false
+        default: ""
+      once:
+        description: "Одна попытка без ретраев (true/false)"
+        required: false
+        default: "false"
+
+concurrency:
+  group: spimex-daily
+  cancel-in-progress: false
+
+jobs:
+  fetch-upload-ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Fetch bulletin (retry until deadline MSK)
+        id: fetch
+        env:
+          SPIMEX_FORCE_IPV4: "0"
+          SPIMEX_HTTP_BACKEND: "auto"
+          SPIMEX_FETCH_DEADLINE: "18:00"
+          SPIMEX_FETCH_INTERVAL_SEC: "120"
+          TRADE_DATE: ${{ github.event.inputs.trade_date }}
+          ONCE: ${{ github.event.inputs.once }}
+        run: |
+          set -euo pipefail
+          mkdir -p _bulletin
+          EXTRA=()
+          if [[ -n "${TRADE_DATE:-}" ]]; then
+            EXTRA+=(--trade-date "$TRADE_DATE")
+          fi
+          if [[ "${ONCE:-false}" == "true" ]]; then
+            EXTRA+=(--once)
+          fi
+          python3 scripts/fetch_spimex_bulletin_only.py --out-dir _bulletin "${EXTRA[@]}"
+          ls -la _bulletin
+          echo "file=$(ls -1 _bulletin/oil_* 2>/dev/null | head -1)" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure inbox on VPS
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SPIMEX_VPS_HOST }}
+          username: ${{ secrets.SPIMEX_VPS_USER }}
+          key: ${{ secrets.SPIMEX_VPS_SSH_KEY }}
+          port: ${{ secrets.SPIMEX_VPS_PORT || 22 }}
+          script: mkdir -p /home/ops/spimex_inbox && chmod 755 /home/ops/spimex_inbox
+
+      - name: SCP bulletin to VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SPIMEX_VPS_HOST }}
+          username: ${{ secrets.SPIMEX_VPS_USER }}
+          key: ${{ secrets.SPIMEX_VPS_SSH_KEY }}
+          port: ${{ secrets.SPIMEX_VPS_PORT || 22 }}
+          source: "_bulletin/oil_*"
+          target: "/home/ops/spimex_inbox"
+          strip_components: 1
+          overwrite: true
+
+      - name: Ingest on VPS (import + restart + digests)
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SPIMEX_VPS_HOST }}
+          username: ${{ secrets.SPIMEX_VPS_USER }}
+          key: ${{ secrets.SPIMEX_VPS_SSH_KEY }}
+          port: ${{ secrets.SPIMEX_VPS_PORT || 22 }}
+          script: sudo -n /opt/fuel_bot/scripts/spimex_vps_ingest.sh
