@@ -20,13 +20,25 @@ echo "=== 1) Публичный ключ на VPS (введи пароль ops �
 ssh-copy-id -i "${KEY}.pub" "${USER}@${HOST}"
 
 echo ""
-echo "=== 2) Inbox + sudoers + ingest script на VPS ==="
-scp -i "$KEY" "$ROOT/scripts/spimex_vps_ingest.sh" "${USER}@${HOST}:/home/ops/spimex_vps_ingest.sh"
+echo "=== 2) Inbox + sudoers + скрипты пайплайна на VPS ==="
+scp -i "$KEY" \
+  "$ROOT/scripts/spimex_vps_ingest.sh" \
+  "$ROOT/scripts/run_spimex_daily_pipeline.py" \
+  "$ROOT/utils/spimex_bulletin_fetch.py" \
+  "$ROOT/price_checker.py" \
+  "${USER}@${HOST}:/home/ops/"
 ssh -i "$KEY" "${USER}@${HOST}" bash -s <<'REMOTE'
 set -euo pipefail
-sudo mkdir -p /opt/fuel_bot/scripts /home/ops/spimex_inbox
+sudo mkdir -p /opt/fuel_bot/scripts /opt/fuel_bot/utils /home/ops/spimex_inbox
 sudo mv -f /home/ops/spimex_vps_ingest.sh /opt/fuel_bot/scripts/spimex_vps_ingest.sh
+sudo mv -f /home/ops/run_spimex_daily_pipeline.py /opt/fuel_bot/scripts/run_spimex_daily_pipeline.py
+sudo mv -f /home/ops/spimex_bulletin_fetch.py /opt/fuel_bot/utils/spimex_bulletin_fetch.py
+sudo mv -f /home/ops/price_checker.py /opt/fuel_bot/price_checker.py
 sudo chmod +x /opt/fuel_bot/scripts/spimex_vps_ingest.sh
+sudo chown -R fuel:fuel /opt/fuel_bot/scripts/spimex_vps_ingest.sh \
+  /opt/fuel_bot/scripts/run_spimex_daily_pipeline.py \
+  /opt/fuel_bot/utils/spimex_bulletin_fetch.py \
+  /opt/fuel_bot/price_checker.py 2>/dev/null || true
 sudo chown ops:ops /home/ops/spimex_inbox
 echo 'ops ALL=(root) NOPASSWD: /opt/fuel_bot/scripts/spimex_vps_ingest.sh' | sudo tee /etc/sudoers.d/fuel-spimex-ingest >/dev/null
 sudo chmod 440 /etc/sudoers.d/fuel-spimex-ingest

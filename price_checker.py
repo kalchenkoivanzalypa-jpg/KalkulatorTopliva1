@@ -77,33 +77,16 @@ async def _notify_user_table_digest(
     notify_max: bool,
     notify_email: bool,
 ) -> None:
-    """Таблица: HTML в MAX и multipart HTML в email (если включены флаги подписки)."""
+    """Таблица: отправка только на email (MAX не поддерживает большие таблицы)."""
     plain = _html_to_plain(html)
     sent_any = False
-    if notify_max and getattr(user, "max_user_id", None):
-        api = _max_api()
-        if api is not None:
-            try:
-                await api.send_message(user_id=int(user.max_user_id), text=html, fmt="html")
-                sent_any = True
-            except Exception:
-                logger.exception(
-                    "MAX table_digest failed user_id=%s max_user_id=%s",
-                    user.id,
-                    getattr(user, "max_user_id", None),
-                )
-        else:
-            logger.warning(
-                "MAX_BOT_TOKEN не задан — пропуск MAX для table_digest user_id=%s",
-                user.id,
-            )
     if notify_email and user.email:
         from web.email_util import send_smtp_email
 
         await send_smtp_email(subject=subject, body=plain, html=html, to_addrs=[user.email])
         sent_any = True
     if not sent_any:
-        raise RuntimeError("Нет канала для table_digest (ни MAX, ни email)")
+        raise RuntimeError("Нет канала для table_digest (email не включен/не задан)")
 
 
 async def _notify_user_html(bot: Optional[Bot], user: User, html: str, subject: str) -> None:
@@ -325,6 +308,68 @@ async def _check_anomalies_once(bot: Optional[Bot]) -> None:
 _MSK = ZoneInfo("Europe/Moscow")
 
 
+async def _digest_price_rows_for_basis(
+    session, sub: BasisDigestSubscription
+) -> list[tuple[str, str, float]]:
+    """
+    Одна строка на каноническое топливо: приоритет ГОСТ-кода (как в расчёте),
+    цена — последняя биржевая из spimex_prices.
+    """
+    from utils import canonical_fuel_display_name
+    from utils.market_price_freshness import display_price_for_pbp, pick_best_product_basis_price_row
+
+    basis_id = int(sub.basis_id)
+    all_products_q = await session.execute(
+        select(Product.id, Product.name).where(Product.is_active.is_(True)).where(Product.name.isnot(None))
+    )
+    id_to_canon: dict[int, str] = {}
+    for pid, pname in all_products_q.all():
+        id_to_canon[int(pid)] = canonical_fuel_display_name(str(pname))
+
+    q = (
+        select(Product.id, Product.name)
+        .join(ProductBasisPrice, ProductBasisPrice.product_id == Product.id)
+        .where(ProductBasisPrice.basis_id == basis_id)
+        .where(ProductBasisPrice.is_active.is_(True))
+        .where(Product.is_active.is_(True))
+        .where(ProductBasisPrice.current_price > 0)
+    )
+    if not bool(getattr(sub, "all_products", False)):
+        pid = getattr(sub, "product_id", None)
+        if not pid:
+            return []
+        q = q.where(Product.id == int(pid))
+
+    products = (await session.execute(q)).all()
+    seen_canon: set[str] = set()
+    out: list[tuple[str, str, float]] = []
+
+    for pid, pname in products:
+        canon = id_to_canon.get(int(pid)) or canonical_fuel_display_name(str(pname or ""))
+        if canon in seen_canon:
+            continue
+        seen_canon.add(canon)
+        alias_ids = [int(i) for i, c in id_to_canon.items() if c == canon]
+        if not alias_ids:
+            alias_ids = [int(pid)]
+        pbp = await pick_best_product_basis_price_row(
+            session,
+            basis_id=basis_id,
+            product_ids=alias_ids,
+            exclude_ai100_price_stub=(canon == "АИ-100-К5"),
+        )
+        if not pbp:
+            continue
+        px = float(await display_price_for_pbp(session, pbp))
+        if px <= 0:
+            continue
+        code = str(getattr(pbp, "instrument_code", None) or "").strip() or "—"
+        out.append((canon, code, px))
+
+    out.sort(key=lambda x: x[0])
+    return out
+
+
 async def _digest_html_for_subscription(session, sub: BasisDigestSubscription) -> Optional[str]:
     """Текст ежедневной сводки по одной подписке (биржевые цены на базисе)."""
     basis = await session.get(Basis, int(sub.basis_id))
@@ -337,32 +382,13 @@ async def _digest_html_for_subscription(session, sub: BasisDigestSubscription) -
     if mode not in ("prices_only", "with_delivery"):
         mode = "prices_only"
 
-    q = (
-        select(
-            Product.name,
-            ProductBasisPrice.instrument_code,
-            ProductBasisPrice.current_price,
-        )
-        .join(Product, Product.id == ProductBasisPrice.product_id)
-        .where(ProductBasisPrice.basis_id == int(sub.basis_id))
-        .where(ProductBasisPrice.is_active.is_(True))
-        .where(Product.is_active.is_(True))
-        .where(ProductBasisPrice.current_price > 0)
-    )
-    if not bool(getattr(sub, "all_products", False)):
-        pid = getattr(sub, "product_id", None)
-        if not pid:
-            return None
-        q = q.where(ProductBasisPrice.product_id == int(pid))
-    q = q.order_by(Product.name)
-
-    rows = (await session.execute(q)).all()
+    rows = await _digest_price_rows_for_basis(session, sub)
 
     lines: list[str] = [
         "📊 <b>Ежедневная сводка по базису</b>",
         "",
         f"Базис: <b>{basis_name}</b> ({transport})",
-        "Раз в день в 14:15 МСК.",
+        "После выхода бюллетеня СПбМТСБ.",
         "",
     ]
     if not rows:
@@ -372,7 +398,9 @@ async def _digest_html_for_subscription(session, sub: BasisDigestSubscription) -
             lines.append("<b>Цены на базисе (СПбМТСБ, ₽/т):</b>")
             for name, code, price in rows:
                 c = (code or "—").strip() or "—"
-                lines.append(f"• {name}: <b>{float(price):,.0f}</b>, код <code>{c}</code>".replace(",", " "))
+                lines.append(
+                    f"• {name}: <b>{float(price):,.0f}</b>, код <code>{c}</code>".replace(",", " ")
+                )
         else:
             dest_id = getattr(sub, "destination_id", None)
             if not dest_id:
@@ -483,7 +511,7 @@ async def _digest_html_for_subscription(session, sub: BasisDigestSubscription) -
                             return float(dist_km) * float(get_delivery_rate_sync(float(dist_km), "auto"))
 
                         for name, code, price in rows:
-                            p = float(price or 0.0)
+                            p = float(price)
                             c = (code or "—").strip() or "—"
                             delivery_per_ton = float(await _delivery_per_ton_for_product(str(name or "")))
                             total = p + delivery_per_ton
@@ -507,12 +535,16 @@ async def _digest_html_for_subscription(session, sub: BasisDigestSubscription) -
     return "\n".join(lines)
 
 
-async def _send_digest_once(bot: Optional[Bot]) -> None:
-    """Один проход: в окне 14:15 МСК отправить всем, кому ещё не слали сегодня."""
+async def _send_digest_once(bot: Optional[Bot], *, force: bool = False) -> int:
+    """
+    Сводка по базису. Шлём только при force=True (после импорта бюллетеня).
+    Возвращает число успешно отмеченных отправок.
+    """
+    if not force:
+        return 0
     now_msk = datetime.now(_MSK)
-    if now_msk.hour != 14 or now_msk.minute != 15:
-        return
     today_msk = now_msk.date()
+    sent = 0
 
     async with AsyncSessionLocal() as session:
         result = await session.execute(
@@ -540,13 +572,13 @@ async def _send_digest_once(bot: Optional[Bot]) -> None:
 
             html = await _digest_html_for_subscription(session, sub)
             if not html:
-                continue  # нет базиса или некорректная подписка
+                continue
             try:
                 await _notify_user_html(
                     bot,
                     user,
                     html,
-                    subject="Ежедневная сводка по базису — НК калькулятор топлива",
+                    subject="Сводка по базису — НК калькулятор топлива",
                 )
             except Exception as exc:
                 logger.warning("Не удалось отправить digest user_id=%s sub_id=%s: %s", user.id, sub.id, exc)
@@ -554,14 +586,19 @@ async def _send_digest_once(bot: Optional[Bot]) -> None:
 
             sub.last_sent_at = datetime.now(timezone.utc)
             await session.commit()
+            sent += 1
+    return sent
 
 
-async def _send_table_digest_once(bot: Optional[Bot]) -> None:
-    """Ежедневная пользовательская таблица — в то же окно 14:15 МСК, что и сводка."""
+async def _send_table_digest_once(bot: Optional[Bot], *, force: bool = False) -> int:
+    """
+    Таблица (СПбМТСБ + доставка). Только после нового бюллетеня (force=True).
+    """
+    if not force:
+        return 0
     now_msk = datetime.now(_MSK)
-    if now_msk.hour != 14 or now_msk.minute != 15:
-        return
     today_msk = now_msk.date()
+    sent = 0
 
     from web.services.table_digest_service import build_table_digest_html
 
@@ -615,17 +652,23 @@ async def _send_table_digest_once(bot: Optional[Bot]) -> None:
 
             sub.last_sent_at = datetime.now(timezone.utc)
             await session.commit()
+            sent += 1
+    return sent
 
 
-async def _digest_loop(bot: Optional[Bot]) -> None:
-    """Отдельно от CHECK_INTERVAL: проверка расписания сводки каждую минуту."""
-    while True:
+async def send_digests_after_bulletin(*, include_basis_digest: bool = True) -> dict[str, int]:
+    """После импорта бюллетеня: таблицы всегда; сводки по базису — по флагу."""
+    out = {"table": 0, "basis": 0}
+    try:
+        out["table"] = int(await _send_table_digest_once(None, force=True))
+    except Exception:
+        logger.exception("Ошибка рассылки table_digest после бюллетеня")
+    if include_basis_digest:
         try:
-            await _send_digest_once(bot)
-            await _send_table_digest_once(bot)
+            out["basis"] = int(await _send_digest_once(None, force=True))
         except Exception:
-            logger.exception("Ошибка в digest loop")
-        await asyncio.sleep(60)
+            logger.exception("Ошибка рассылки basis digest после бюллетеня")
+    return out
 
 
 async def start_price_checker(bot: Optional[Bot]) -> None:
@@ -643,11 +686,11 @@ async def start_price_checker(bot: Optional[Bot]) -> None:
             await asyncio.sleep(interval_sec)
 
     asyncio.create_task(_loop())
-    asyncio.create_task(_digest_loop(bot))
     logger.info(
-        "Проверка цен для подписок запущена (каждые %s мин); ежедневная сводка — в 14:15 МСК (отдельный цикл)",
+        "Проверка цен для подписок запущена (каждые %s мин); "
+        "сводки/таблицы — после автоимпорта бюллетеня СПбМТСБ (не по часам 14:15)",
         minutes,
     )
 
 
-__all__ = ["start_price_checker"]
+__all__ = ["start_price_checker", "send_digests_after_bulletin"]
