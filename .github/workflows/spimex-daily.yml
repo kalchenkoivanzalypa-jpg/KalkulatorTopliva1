@@ -3,9 +3,8 @@
 name: spimex-daily
 
 on:
-  schedule:
-    # 13:50 Europe/Moscow = 10:50 UTC (МСК без перевода часов)
-    - cron: "50 10 * * 1-5"
+  # schedule отключён: runners GitHub не достучатся до spimex.com (Connection refused).
+  # Автоматика — Mac launchd: scripts/setup_spimex_mac_launchd.sh
   workflow_dispatch:
     inputs:
       trade_date:

@@ -1,35 +1,30 @@
-# Автоскачивание бюллетеней СПбМТСБ (когда VPS не достучится до биржи)
+# Автоскачивание бюллетеней СПбМТСБ
 
-VPS (`82.x`) часто получает `Connection refused` на `spimex.com:443`.
-Поэтому **скачивание идёт с GitHub Actions**, файл заливается на сервер, там импорт и рассылка.
+`spimex.com` **блокирует** VPS и GitHub Actions (`Connection refused`).  
+С **твоего Mac** сайт открывается — автоматика идёт через Mac.
 
-## Один раз настроить (Mac)
+## Один раз
 
-Прокси **не нужен**. Скачивает GitHub Actions (не VPS и не твой Mac как cron).
+VPS (inbox + sudoers + ingest) уже настроены на прошлых шагах.
+
+На Mac:
 
 ```bash
 cd ~/Desktop/fuel_bot
-bash scripts/setup_spimex_gha_once.sh
+bash scripts/setup_spimex_mac_launchd.sh
 ```
 
-Скрипт: создаст SSH-ключ, положит публичный на VPS, зальёт `spimex_vps_ingest.sh`, настроит inbox/sudoers, выключит бесполезный VPS-таймер, **напечатает private key** — его вставить в GitHub Secrets.
-
-### Secrets в GitHub (Settings → Secrets and variables → Actions)
-
-| Secret | Значение |
-|--------|----------|
-| `SPIMEX_VPS_HOST` | `82.22.38.34` |
-| `SPIMEX_VPS_USER` | `ops` |
-| `SPIMEX_VPS_SSH_KEY` | весь private key из вывода скрипта |
-| `SPIMEX_VPS_PORT` | `22` (опционально) |
-
-Потом пуш workflow (если ещё не в `main`) и **Actions → spimex-daily → Run workflow**.
-
-Расписание: будни **13:50 МСК**, ретраи каждые 2 мин до **18:00 МСК**, потом SCP + ingest.
-
-## Проверка ingest на VPS вручную
+Тест прямо сейчас:
 
 ```bash
-# положить pdf в inbox и:
-sudo /opt/fuel_bot/scripts/spimex_vps_ingest.sh
+bash scripts/spimex_mac_daily.sh --once --trade-date 2026-08-10
 ```
+
+Дальше: будни с **13:50 МСК** Mac сам скачает PDF → зальёт на VPS → импорт/рестарт/рассылка.  
+Mac должен быть **включён** (не sleep наглухо) в это время.
+
+Лог: `logs/spimex_mac_daily.log`
+
+## GitHub Actions
+
+Оставлен только ручной `workflow_dispatch` (для отладки). По расписанию не гоняем — до биржи с runners нет доступа.
