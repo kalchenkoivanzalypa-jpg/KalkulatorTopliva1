@@ -21,11 +21,19 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from utils.spimex_bulletin_fetch import (
-    download_bulletin,
-    find_bulletin_for_date,
-    local_bulletin_for_date,
+# Грузим файл напрямую: utils/__init__.py тянет sqlalchemy (на GHA его нет).
+import importlib.util
+
+_spec = importlib.util.spec_from_file_location(
+    "spimex_bulletin_fetch",
+    ROOT / "utils" / "spimex_bulletin_fetch.py",
 )
+_mod = importlib.util.module_from_spec(_spec)
+assert _spec.loader is not None
+_spec.loader.exec_module(_mod)
+download_bulletin = _mod.download_bulletin
+find_bulletin_for_date = _mod.find_bulletin_for_date
+local_bulletin_for_date = _mod.local_bulletin_for_date
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("spimex_fetch_only")
